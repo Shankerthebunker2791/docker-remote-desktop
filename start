@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 
-docker run --detach --rm --hostname="$(hostname)" --publish="3390:3390/tcp" --name="ubuntu-vm" ubuntu-dev:latest
-
-docker run --detach --rm --hostname="$(hostname)" --publish="3389:3389/tcp" --name="xubuntu-vm" xubuntu-dev:latest
-
+docker run --detach --rm \
+  --user root \
+  --name="ubuntu-vm" \
+  --hostname="$(hostname)" \
+  --publish="3390:3390/tcp" \
+  --shm-size="2g" \
+  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+  --mount type=bind,source=/Users/shankerthebunker/shared,target=/shared \
+  ubuntu-dev:latest /bin/bash
+  
+docker run --detach --rm \
+  --user root \
+  --name="xubuntu-vm" \
+  --hostname="$(hostname)" \
+  --publish="3389:3389/tcp" \
+  --shm-size="2g" \
+  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+  --mount type=bind,source=/Users/shankerthebunker/shared,target=/shared \
+  xubuntu-dev:latest /bin/bash
