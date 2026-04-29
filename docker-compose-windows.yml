@@ -282,8 +282,8 @@ services:
 
     devices:
       # /dev/kvm       — KVM hardware acceleration (required)
-      # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC
       - /dev/kvm
+      # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC
       - /dev/net/tun
       # Uncomment for DHCP mode:
       # - /dev/vhost-net

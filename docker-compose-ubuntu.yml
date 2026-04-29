@@ -48,7 +48,7 @@
 #
 #   METHOD — RDP (Remote Desktop Protocol, port 3390):
 #
-#     NOTE: This uses host port 3390 (not 3390) to avoid conflicts if you
+#     NOTE: This uses host port 3390 (not 3389s) to avoid conflicts if you
 #     are also running the Xubuntu or Windows compose files simultaneously.
 #     Change the port mapping below if you prefer a different port.
 #
@@ -224,14 +224,14 @@ services:
     container_name: ubuntu-vm
     hostname: ubuntu-vm
 
-    devices:
+    # devices:
       # /dev/kvm — KVM hardware acceleration for Android emulator.
       #            Remove this line if you don't need the emulator.
-      - /dev/kvm
+      #            NOTE: /dev/kvm is only available on Linux hosts.
+      # - /dev/kvm
 
     ports:
-      # 3390 — RDP (uses 3390 to avoid conflict with xubuntu on 3390).
-      #         Change to 3390:3390/tcp if running standalone.
+      # 3390 — RDP (uses 3390 to avoid conflict with xubuntu on 3389).
       #         Username: ubuntu / Password: ubuntu
       - 3390:3390/tcp
       # Uncomment for SSH access (host port 2223 → container port 22):

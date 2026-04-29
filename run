@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
 
-docker run -it \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3390:3390/tcp" \
-    --name="ubuntu-vm" \
-    --shm-size="1g" \
-    ubuntu-dev:latest /bin/bash
+docker run -it --rm --hostname="$(hostname)" --publish="3390:3390/tcp" --name="ubuntu-vm" --shm-size="1g" ubuntu-dev:latest /bin/bash
 
-docker run -it \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3389:3389/tcp" \
-    --name="xubuntu-vm" \
-    --shm-size="1g" \
-    xubuntu-dev:latest /bin/bash
+docker run -it --rm --hostname="$(hostname)" --publish="3389:3389/tcp" --name="xubuntu-vm" --shm-size="1g" xubuntu-dev:latest /bin/bash

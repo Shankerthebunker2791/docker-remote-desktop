@@ -185,7 +185,8 @@ services:
     devices:
       # /dev/kvm — KVM hardware acceleration for Android emulator.
       #            Remove this line if you don't need the emulator.
-      - /dev/kvm
+      #            NOTE: /dev/kvm is only available on Linux hosts.
+      # - /dev/kvm
 
     ports:
       # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.

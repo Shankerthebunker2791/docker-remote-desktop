@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 
-docker run --detach \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3390:3390/tcp" \
-    --name="ubuntu-vm" \
-    ubuntu-dev:latest
+docker run --detach --rm --hostname="$(hostname)" --publish="3390:3390/tcp" --name="ubuntu-vm" ubuntu-dev:latest
 
-docker run --detach \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3389:3389/tcp" \
-    --name="xubuntu-vm" \
-    xubuntu-dev:latest
+docker run --detach --rm --hostname="$(hostname)" --publish="3389:3389/tcp" --name="xubuntu-vm" xubuntu-dev:latest
+

@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev . && docker build --no-cache -f Dockerfile.ubuntu -t ubuntu-dev .
+docker build --no-cache -f Dockerfile.ubuntu -t ubuntu-dev .
+
+docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .

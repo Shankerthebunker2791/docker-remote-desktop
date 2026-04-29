@@ -747,6 +747,9 @@ RUN echo "gnome-session" > /etc/skel/.xsession && \
 COPY --from=builder /tmp/install /
 RUN sed -i 's|^Exec=.*|Exec=/usr/bin/pulseaudio|' /etc/xdg/autostart/pulseaudio-xrdp.desktop
 
+# Configure xrdp to listen on port 3390 instead of default 3389
+RUN sed -i 's|^port=3389$|port=3390|' /etc/xrdp/xrdp.ini
+
 # Copy entrypoint (same as Dockerfile02)
 COPY entrypoint.sh /usr/bin/entrypoint
 
