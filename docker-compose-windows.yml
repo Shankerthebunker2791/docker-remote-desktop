@@ -1,0 +1,331 @@
+# =============================================================================
+# docker-compose-windows.yml — Windows VM in Docker
+# Source: https://github.com/dockur/windows
+#
+# Runs a full Windows installation inside a Docker container using QEMU/KVM.
+# The installation is fully automatic — no manual steps required.
+# =============================================================================
+#
+# ─── PREREQUISITES ───────────────────────────────────────────────────────────
+#
+#   KVM SUPPORT (required for acceptable performance):
+#
+#     Platform compatibility:
+#       ┌──────────────────┬───────┬───────┬───────┬───────┐
+#       │ Product          │ Linux │ Win11 │ Win10 │ macOS │
+#       ├──────────────────┼───────┼───────┼───────┼───────┤
+#       │ Docker CLI       │  ✅   │  ✅   │  ❌   │  ❌   │
+#       │ Docker Desktop   │  ❌   │  ✅   │  ❌   │  ❌   │
+#       │ Podman CLI       │  ✅   │  ✅   │  ❌   │  ❌   │
+#       │ Podman Desktop   │  ✅   │  ✅   │  ❌   │  ❌   │
+#       └──────────────────┴───────┴───────┴───────┴───────┘
+#
+#     Verify KVM on Linux:
+#       sudo apt install cpu-checker
+#       sudo kvm-ok
+#
+#     If kvm-ok fails, check:
+#       1. Intel VT-x or AMD SVM is enabled in BIOS
+#       2. "Nested virtualization" is enabled if running inside a VM
+#       3. Your cloud provider allows nested virtualization
+#       4. Try adding privileged: true to rule out permission issues
+#
+#   DISK SPACE:
+#     Windows 11 ISO is ~7.2 GB. After install, the VM disk needs ~20-30 GB.
+#     Ensure the host path for /storage has enough free space.
+#
+# ─── QUICK START ─────────────────────────────────────────────────────────────
+#
+#   # Start the VM:
+#   docker compose -f docker-compose-windows.yml up -d
+#
+#   # Watch installation progress in your browser:
+#   http://localhost:8006
+#
+#   # Wait ~15-30 minutes for automatic installation to complete.
+#   # Once you see the Windows desktop, it's ready.
+#
+# ─── CONNECTING ──────────────────────────────────────────────────────────────
+#
+#   METHOD 1 — Web browser (noVNC, no client needed):
+#     http://localhost:8006
+#     Best for: initial setup, quick checks, when no RDP client is available.
+#     Limitations: lower image quality, no audio, no clipboard sync.
+#
+#   METHOD 2 — RDP (recommended for daily use):
+#     The web viewer is mainly for installation. For a better experience
+#     with audio, clipboard, and full resolution, use RDP:
+#
+#     Windows host:
+#       Press Win+R → type "mstsc" → Connect to: localhost:3389
+#       Or search for "Remote Desktop Connection" in Start menu
+#
+#     macOS host:
+#       Install "Windows App" (formerly Microsoft Remote Desktop) from App Store
+#       Add PC → PC name: localhost:3389
+#
+#     Linux host:
+#       xfreerdp /v:localhost:3389 /u:Docker /p:admin
+#       Or use Remmina → New connection → RDP → Server: localhost:3389
+#
+#     Android:
+#       Install "RD Client" from Play Store → Add PC → localhost:3389
+#
+#     iOS:
+#       Install "RD Client" from App Store → Add PC → localhost:3389
+#
+#     Default RDP credentials:
+#       Username: Docker
+#       Password: admin
+#
+# ─── LIFECYCLE COMMANDS ──────────────────────────────────────────────────────
+#
+#   # Start (first run downloads ISO + installs Windows automatically):
+#   docker compose -f docker-compose-windows.yml up -d
+#
+#   # Stop (graceful shutdown, saves Windows state):
+#   docker compose -f docker-compose-windows.yml stop
+#
+#   # Restart (resumes from where you left off, all data persists):
+#   docker compose -f docker-compose-windows.yml start
+#
+#   # View logs (useful during installation):
+#   docker compose -f docker-compose-windows.yml logs -f
+#
+#   # Remove container (data persists in ./windows-data):
+#   docker compose -f docker-compose-windows.yml down
+#
+#   # Recreate container (picks up config changes, data persists):
+#   docker compose -f docker-compose-windows.yml up -d --force-recreate
+#
+#   # Full reset (destroy everything, start fresh):
+#   docker compose -f docker-compose-windows.yml down
+#   rm -rf ./windows-data
+#   docker compose -f docker-compose-windows.yml up -d
+#
+# ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
+#
+#   All Windows data (virtual disk image, VM state, installed software,
+#   user files) is stored in ./windows-data on the host via the /storage
+#   volume mount. This survives:
+#     ✅ docker compose stop / start
+#     ✅ docker compose down / up
+#     ✅ docker compose restart
+#     ✅ Host machine reboot
+#     ❌ Deleting ./windows-data (this resets everything)
+#
+# ─── SHARED FOLDER ───────────────────────────────────────────────────────────
+#
+#   The ./shared folder on the host is mounted into the VM as /shared.
+#   After Windows installation completes, a folder called "Shared" appears
+#   on the Windows desktop. Files placed in ./shared on the host are
+#   immediately visible inside Windows, and vice versa.
+#
+# ─── POST-INSTALL SCRIPT ────────────────────────────────────────────────────
+#
+#   To run a custom script after Windows installation:
+#     1. Create a folder (e.g., ./oem) with an install.bat file inside
+#     2. Add any additional files the script needs to the same folder
+#     3. Bind the folder in volumes:
+#          - ./oem:/oem
+#     4. The folder is copied to C:\OEM and install.bat runs automatically
+#        during the last step of installation
+#
+# ─── CUSTOM ISO ──────────────────────────────────────────────────────────────
+#
+#   To use a custom Windows ISO instead of the auto-downloaded one:
+#
+#   Option A — Download from URL:
+#     environment:
+#       VERSION: "https://example.com/custom-win.iso"
+#
+#   Option B — Use a local ISO file:
+#     volumes:
+#       - ./my-windows.iso:/boot.iso
+#     (VERSION is ignored when /boot.iso is mounted)
+#
+# ─── MACVLAN NETWORKING (individual IP) ──────────────────────────────────────
+#
+#   To give the Windows VM its own IP on your LAN (no port mapping needed):
+#
+#     # Create the macvlan network (once):
+#     docker network create -d macvlan --subnet=192.168.0.0/24 --gateway=192.168.0.1 --ip-range=192.168.0.100/28 -o parent=eth0 vlan
+#
+#     # Then add to compose:
+#     services:
+#       windows:
+#         ...
+#         networks:
+#           vlan:
+#             ipv4_address: 192.168.0.100
+#     networks:
+#       vlan:
+#         external: true
+#
+#   To let Windows get a DHCP IP from your router:
+#     environment:
+#       DHCP: "Y"
+#     devices:
+#       - /dev/vhost-net
+#     device_cgroup_rules:
+#       - 'c *:* rwm'
+#
+#   Note: macvlan IPs are NOT accessible from the Docker host itself.
+#
+# ─── ADDITIONAL DISKS ────────────────────────────────────────────────────────
+#
+#   To add secondary virtual disks:
+#     environment:
+#       DISK2_SIZE: "32G"
+#       DISK3_SIZE: "64G"
+#     volumes:
+#       - ./disk2:/storage2
+#       - ./disk3:/storage3
+#
+# ─── USB PASSTHROUGH ─────────────────────────────────────────────────────────
+#
+#   To pass a USB device into the VM:
+#     1. Find vendor/product ID: lsusb
+#     2. Add to compose:
+#        environment:
+#          ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x1234"
+#        devices:
+#          - /dev/bus/usb
+#     Note: Wait until after installation before connecting USB disk drives.
+#
+# ─── DISK PASSTHROUGH ────────────────────────────────────────────────────────
+#
+#   To pass physical disks/partitions directly:
+#     devices:
+#       - /dev/sdb:/disk1    # Main drive (formatted during install)
+#       - /dev/sdc1:/disk2   # Secondary drive (untouched)
+#
+# =============================================================================
+
+services:
+  windows:
+    image: dockurr/windows
+    container_name: windows-vm
+    environment:
+      # ── Windows Version ──────────────────────────────────────────────
+      # Default: "11" (Windows 11 Pro, 7.2 GB download)
+      #
+      # Desktop versions:
+      #   "11"  = Windows 11 Pro (7.2 GB)
+      #   "11l" = Windows 11 LTSC (4.7 GB)
+      #   "11e" = Windows 11 Enterprise (6.6 GB)
+      #   "10"  = Windows 10 Pro (5.7 GB)
+      #   "10l" = Windows 10 LTSC (4.6 GB)
+      #   "10e" = Windows 10 Enterprise (5.2 GB)
+      #   "8e"  = Windows 8.1 Enterprise (3.7 GB)
+      #   "7u"  = Windows 7 Ultimate (3.1 GB)
+      #   "vu"  = Windows Vista Ultimate (3.0 GB)
+      #   "xp"  = Windows XP Professional (0.6 GB)
+      #   "2k"  = Windows 2000 Professional (0.4 GB)
+      #
+      # Server versions:
+      #   "2025" = Windows Server 2025 (6.7 GB)
+      #   "2022" = Windows Server 2022 (6.0 GB)
+      #   "2019" = Windows Server 2019 (5.3 GB)
+      #   "2016" = Windows Server 2016 (6.5 GB)
+      #   "2012" = Windows Server 2012 (4.3 GB)
+      #   "2008" = Windows Server 2008 (3.0 GB)
+      #   "2003" = Windows Server 2003 (0.6 GB)
+      #
+      # Custom ISO URL:
+      #   "https://example.com/custom.iso"
+      VERSION: "xp"
+
+      # ── VM Resources ─────────────────────────────────────────────────
+      # Default: 2 CPU cores, 4 GB RAM
+      RAM_SIZE: "4G"
+      CPU_CORES: "2"
+
+      # ── Virtual Disk Size ────────────────────────────────────────────
+      # Default: 64 GB. Can be increased later without data loss
+      # (you'll need to extend the partition manually in Disk Management)
+      DISK_SIZE: "30G"
+
+      # ── User Credentials ────────────────────────────────────────────
+      # Default: username=Docker, password=admin
+      # These are set during automatic installation
+      USERNAME: "Docker"
+      PASSWORD: "admin"
+
+      # ── Language & Locale ────────────────────────────────────────────
+      # Default: English
+      # Options: Arabic, Bulgarian, Chinese, Croatian, Czech, Danish,
+      #          Dutch, English, Estonian, Finnish, French, German, Greek,
+      #          Hebrew, Hungarian, Italian, Japanese, Korean, Latvian,
+      #          Lithuanian, Norwegian, Polish, Portuguese, Romanian,
+      #          Russian, Serbian, Slovak, Slovenian, Spanish, Swedish,
+      #          Thai, Turkish, Ukrainian
+      LANGUAGE: "English"
+
+      # ── Keyboard Layout & Region ─────────────────────────────────────
+      # Default: matches LANGUAGE. Override if you need a different layout.
+      # REGION: "en-US"
+      # KEYBOARD: "en-US"
+
+      # ── DHCP (requires macvlan network) ──────────────────────────────
+      # Uncomment to let Windows get an IP from your router:
+      # DHCP: "Y"
+
+      # ── Additional Disks ─────────────────────────────────────────────
+      # Uncomment to add secondary virtual disks:
+      # DISK2_SIZE: "32G"
+      # DISK3_SIZE: "64G"
+
+      # ── QEMU Arguments (advanced) ───────────────────────────────────
+      # Pass additional QEMU arguments (e.g., USB passthrough):
+      # ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x1234"
+
+    devices:
+      # /dev/kvm       — KVM hardware acceleration (required)
+      # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC
+      - /dev/kvm
+      - /dev/net/tun
+      # Uncomment for DHCP mode:
+      # - /dev/vhost-net
+      # Uncomment for USB passthrough:
+      # - /dev/bus/usb
+
+    cap_add:
+      # NET_ADMIN — required for the VM to configure its network interface
+      - NET_ADMIN
+
+    # Uncomment for DHCP mode:
+    # device_cgroup_rules:
+    #   - 'c *:* rwm'
+
+    ports:
+      # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
+      #         Best for installation monitoring and quick checks.
+      - 8006:8006
+      # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.
+      #         Provides full audio, clipboard, and resolution support.
+      - 3389:3389/tcp
+      - 3389:3389/udp
+
+    volumes:
+      # /storage — Persistent VM disk image and state.
+      #            All Windows data lives here. Survives stop/start/down/up.
+      #            Delete this folder to completely reset the VM.
+      - ./windows-data:/storage
+      # /shared  — Shared folder. Appears as "Shared" on the Windows desktop.
+      #            Use to exchange files between host and VM.
+      - ./shared:/shared
+      # Uncomment for additional disks:
+      # - ./disk2:/storage2
+      # - ./disk3:/storage3
+      # Uncomment for post-install script:
+      # - ./oem:/oem
+      # Uncomment for local ISO:
+      # - ./my-windows.iso:/boot.iso
+
+    # Restart policy — keeps the VM running after host reboot
+    restart: unless-stopped
+
+    # Give Windows 2 minutes to shut down gracefully before force-killing.
+    # Windows needs time to save state and flush disk writes.
+    stop_grace_period: 2m

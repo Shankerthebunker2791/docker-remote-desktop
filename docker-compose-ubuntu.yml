@@ -1,0 +1,272 @@
+# =============================================================================
+# docker-compose-ubuntu.yml — Ubuntu (GNOME) Desktop VM in Docker
+# Built from: Dockerfile.ubuntu
+#
+# Runs a full Ubuntu GNOME desktop with CI/CD toolchain (Java, Node, Python,
+# Gradle, Maven, Ant, Android SDK, Docker CLI) inside a Docker container.
+# Connects via RDP (port 3390) using any Remote Desktop client.
+# The Ubuntu version is configurable via build arg.
+# =============================================================================
+#
+# ─── PREREQUISITES ───────────────────────────────────────────────────────────
+#
+#   KVM SUPPORT (required for Android emulator, optional for desktop):
+#     The Ubuntu desktop itself does NOT require KVM — it runs natively
+#     in the container. KVM is only needed if you plan to use the Android
+#     emulator inside the container.
+#
+#     Verify KVM on Linux:
+#       sudo apt install cpu-checker
+#       sudo kvm-ok
+#
+#     If you don't need the Android emulator, remove the /dev/kvm device
+#     mapping below.
+#
+#   DOCKER SOCKET (optional, for Docker CLI inside the container):
+#     If you want to run docker commands from inside the Ubuntu desktop,
+#     mount the host's Docker socket. This gives the container full control
+#     over the host's Docker daemon (security implications — see below).
+#
+# ─── QUICK START ─────────────────────────────────────────────────────────────
+#
+#   # Build and start (defaults to Ubuntu 24.04 Noble):
+#   docker compose -f docker-compose-ubuntu.yml up -d --build
+#
+#   # Build with a specific Ubuntu version:
+#   docker compose -f docker-compose-ubuntu.yml build --build-arg TAG=jammy
+#   docker compose -f docker-compose-ubuntu.yml up -d
+#
+#   # Start (after first build):
+#   docker compose -f docker-compose-ubuntu.yml up -d
+#
+#   # Connect via RDP:
+#   Open your RDP client → localhost:3390
+#   Username: ubuntu
+#   Password: ubuntu
+#
+# ─── CONNECTING ──────────────────────────────────────────────────────────────
+#
+#   METHOD — RDP (Remote Desktop Protocol, port 3390):
+#
+#     NOTE: This uses host port 3390 (not 3390) to avoid conflicts if you
+#     are also running the Xubuntu or Windows compose files simultaneously.
+#     Change the port mapping below if you prefer a different port.
+#
+#     Windows host:
+#       Press Win+R → type "mstsc" → Connect to: localhost:3390
+#       Or search for "Remote Desktop Connection" in Start menu
+#
+#     macOS host:
+#       Install "Windows App" (formerly Microsoft Remote Desktop) from App Store
+#       Add PC → PC name: localhost:3390
+#
+#     Linux host:
+#       xfreerdp /v:localhost:3390 /u:ubuntu /p:ubuntu
+#       Or use Remmina → New connection → RDP → Server: localhost:3390
+#
+#     Default RDP credentials:
+#       Username: ubuntu
+#       Password: ubuntu
+#
+# ─── UBUNTU VERSION SELECTION ────────────────────────────────────────────────
+#
+#   Dockerfile.ubuntu accepts a TAG build argument to select the Ubuntu version.
+#   Default is "noble" (24.04 LTS).
+#
+#   Supported values:
+#     ┌──────────┬─────────────────────────┐
+#     │ TAG      │ Ubuntu Version           │
+#     ├──────────┼─────────────────────────┤
+#     │ focal    │ 20.04 LTS (Focal Fossa) │
+#     │ jammy    │ 22.04 LTS (Jammy Jelly) │
+#     │ noble    │ 24.04 LTS (Noble Numbat)│ ← default
+#     │ oracular │ 24.10 (Oracular Oriole) │
+#     └──────────┴─────────────────────────┘
+#
+#   To change the version, uncomment and set the TAG arg in the build section,
+#   or pass it on the command line:
+#     docker compose -f docker-compose-ubuntu.yml build --build-arg TAG=jammy
+#
+#   NOTE: Package names and availability may vary across Ubuntu versions.
+#         Dockerfile.ubuntu is tested against noble (24.04). Older releases may
+#         require adjustments (e.g., libasound2 vs libasound2t64, python3.12
+#         availability, easyeffects vs pulseeffects).
+#
+# ─── LIFECYCLE COMMANDS ──────────────────────────────────────────────────────
+#
+#   # Build image + start container:
+#   docker compose -f docker-compose-ubuntu.yml up -d --build
+#
+#   # Start (image already built):
+#   docker compose -f docker-compose-ubuntu.yml up -d
+#
+#   # Stop (preserves container state):
+#   docker compose -f docker-compose-ubuntu.yml stop
+#
+#   # Restart (resumes from where you left off):
+#   docker compose -f docker-compose-ubuntu.yml start
+#
+#   # View logs:
+#   docker compose -f docker-compose-ubuntu.yml logs -f
+#
+#   # Remove container (named volumes persist):
+#   docker compose -f docker-compose-ubuntu.yml down
+#
+#   # Remove container + named volumes (full reset):
+#   docker compose -f docker-compose-ubuntu.yml down -v
+#
+#   # Rebuild after Dockerfile.ubuntu changes:
+#   docker compose -f docker-compose-ubuntu.yml up -d --build --force-recreate
+#
+# ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
+#
+#   The container's filesystem is ephemeral by default — if you remove the
+#   container, all data inside it is lost. To persist data, use volumes:
+#
+#   Named volume (ubuntu-home):
+#     Persists the ubuntu user's home directory (/home/ubuntu) across
+#     container stop/start/down/up cycles. This includes:
+#       - Desktop files, Documents, Downloads
+#       - Browser bookmarks and history
+#       - SSH keys (~/.ssh)
+#       - Git config (~/.gitconfig)
+#       - GNOME settings (dconf database)
+#       - IDE settings, shell history, etc.
+#
+#   Bind mount (./shared → /home/ubuntu/shared):
+#     Exchange files between the host and the container. Files placed in
+#     ./shared on the host appear instantly in /home/ubuntu/shared inside
+#     the container, and vice versa.
+#
+#   Bind mount (./projects → /home/ubuntu/projects):
+#     Mount your host project directory into the container for development.
+#     Edit files from either side.
+#
+#   Persistence survives:
+#     ✅ docker compose stop / start
+#     ✅ docker compose down / up (named volumes persist)
+#     ✅ Host machine reboot
+#     ❌ docker compose down -v (deletes named volumes)
+#     ❌ Deleting bind mount folders on the host
+#
+# ─── SHARED FOLDER ───────────────────────────────────────────────────────────
+#
+#   The ./shared folder on the host is mounted at /home/ubuntu/shared
+#   inside the container. Use it to exchange files between host and VM.
+#   The folder is created automatically on first run.
+#
+# ─── DOCKER CLI INSIDE THE CONTAINER ─────────────────────────────────────────
+#
+#   Dockerfile.ubuntu includes docker-ce-cli, docker-compose-plugin, and
+#   docker-buildx-plugin. To use them, mount the host's Docker socket:
+#
+#     volumes:
+#       - /var/run/docker.sock:/var/run/docker.sock
+#
+#   Then inside the container:
+#     docker ps
+#     docker images
+#     docker compose up -d
+#
+#   To let the 'ubuntu' user run docker without sudo:
+#     sudo groupadd -g <HOST_DOCKER_GID> docker
+#     sudo usermod -aG docker ubuntu
+#     # Then re-login to the RDP session
+#
+#   SECURITY: Mounting docker.sock gives the container full control over
+#   the host's Docker daemon. Only do this in trusted environments.
+#
+# ─── ANDROID EMULATOR ────────────────────────────────────────────────────────
+#
+#   The image includes Android SDK, emulator, and a pre-created AVD.
+#   To start the emulator inside the container:
+#
+#     emulator -avd automation_device -no-window -no-audio -no-boot-anim -gpu off &
+#     adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
+#     adb devices
+#
+#   Requires /dev/kvm to be mounted (see devices section below).
+#
+# ─── SSH ACCESS (alternative to RDP) ─────────────────────────────────────────
+#
+#   The image includes openssh-server. To enable SSH access:
+#     1. Uncomment the port 22 mapping below
+#     2. Inside the container: sudo service ssh start
+#     3. From the host: ssh ubuntu@localhost -p 2223
+#
+# ─── RUNNING MULTIPLE DESKTOPS SIMULTANEOUSLY ────────────────────────────────
+#
+#   You can run Xubuntu, Ubuntu, Windows, and macOS VMs at the same time.
+#   Each uses a different host port to avoid conflicts:
+#
+#     ┌─────────────────────┬──────────┬──────────────────────────┐
+#     │ Compose File        │ RDP/VNC  │ Web Viewer               │
+#     ├─────────────────────┼──────────┼──────────────────────────┤
+#     │ xubuntu             │ 3389     │ —                        │
+#     │ ubuntu              │ 3390     │ —                        │
+#     │ windows             │ 3391*    │ http://localhost:8006    │
+#     │ macos               │ VNC 5900 │ http://localhost:8007*   │
+#     └─────────────────────┴──────────┴──────────────────────────┘
+#     * Adjust port mappings in the respective compose files to avoid clashes
+#
+# =============================================================================
+
+services:
+  ubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+      args:
+        # Ubuntu version — change to build a different release.
+        # See "UBUNTU VERSION SELECTION" section above for options.
+        TAG: noble
+    image: ubuntu-dev:latest
+    container_name: ubuntu-vm
+    hostname: ubuntu-vm
+
+    devices:
+      # /dev/kvm — KVM hardware acceleration for Android emulator.
+      #            Remove this line if you don't need the emulator.
+      - /dev/kvm
+
+    ports:
+      # 3390 — RDP (uses 3390 to avoid conflict with xubuntu on 3390).
+      #         Change to 3390:3390/tcp if running standalone.
+      #         Username: ubuntu / Password: ubuntu
+      - 3390:3390/tcp
+      # Uncomment for SSH access (host port 2223 → container port 22):
+      # - 2223:22/tcp
+
+    volumes:
+      # ── Persistent home directory ────────────────────────────────────
+      # Named volume that preserves /home/ubuntu across container restarts.
+      # Includes Desktop, Documents, Downloads, SSH keys, shell history,
+      # browser data, GNOME settings, and all user-level configuration.
+      - ubuntu-home:/home/ubuntu
+
+      # ── Shared folder (host ↔ container) ─────────────────────────────
+      # Bind mount for exchanging files between host and container.
+      # Files in ./shared on the host appear at /home/ubuntu/shared.
+      - ./shared:/home/ubuntu/shared
+
+      # ── Project directory (host ↔ container) ─────────────────────────
+      # Bind mount your project folder for development.
+      # Uncomment and adjust the host path:
+      # - ./projects:/home/ubuntu/projects
+
+      # ── Docker socket (for docker CLI inside container) ──────────────
+      # Uncomment to enable docker commands inside the container.
+      # SECURITY: Gives container full control over host Docker daemon.
+      # - /var/run/docker.sock:/var/run/docker.sock
+
+    # Restart policy — keeps the container running after host reboot
+    restart: unless-stopped
+
+    # Give xrdp and running processes time to shut down gracefully
+    stop_grace_period: 30s
+
+# Named volumes — persist across container stop/start/down/up.
+# Deleted only with: docker compose down -v
+volumes:
+  ubuntu-home:
+    name: ubuntu-home

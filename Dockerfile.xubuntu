@@ -1,0 +1,789 @@
+# =============================================================================
+# Dockerfile.xubuntu — Combined GUI VM + CI/CD Automation Image
+#
+# Merges Dockerfile01 (Java, Node, Python, Gradle, Maven, Ant, Android SDK)
+# with Dockerfile02 (XFCE desktop + xRDP) into a single Xubuntu container
+# that can be used as a full desktop VM replacement with all dev/CI tooling.
+#
+# Connect via RDP on port 3389 (user: ubuntu / pass: ubuntu)
+#
+# Build:
+#   docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
+#
+# Run (basic):
+#   docker run -d -p 3389:3389 --device /dev/kvm xubuntu-dev
+#
+# Run (with Docker socket for docker CLI access from inside the container):
+#   docker run -d -p 3389:3389 --device /dev/kvm -v /var/run/docker.sock:/var/run/docker.sock xubuntu-dev
+#
+# Run (with shared folder between host and container):
+#   docker run -d -p 3389:3389 --device /dev/kvm -v /path/on/host:/home/ubuntu/shared xubuntu-dev
+#
+# Run (multiple shared folders, .ssh read-only):
+#   docker run -d -p 3389:3389 --device /dev/kvm -v C:\Users\you\projects:/home/ubuntu/projects -v C:\Users\you\.ssh:/home/ubuntu/.ssh:ro xubuntu-dev
+#
+# Run (with Docker-managed persistent volume):
+#   docker volume create dev-data
+#   docker run -d -p 3389:3389 --device /dev/kvm -v dev-data:/home/ubuntu/data xubuntu-dev
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# STAGE 1: Build xrdp pulseaudio modules
+# (Identical to Dockerfile02 builder stage)
+#
+# This stage compiles PulseAudio sink/source modules for xrdp so that audio
+# from the desktop session is redirected over the RDP connection to the client.
+# Source: https://github.com/neutrinolabs/pulseaudio-module-xrdp
+#
+# Builder-only dependencies (not carried into the final image):
+#   autoconf           — GNU Autoconf, generates ./configure scripts from
+#                        configure.ac templates for portable builds
+#   build-essential    — Meta-package: GCC, G++, make, dpkg-dev, libc-dev.
+#                        The minimum toolchain needed to compile C/C++ code
+#   ca-certificates    — Mozilla CA bundle so HTTPS (git clone, wget) works
+#   dpkg-dev           — Debian package dev tools; provides dpkg-architecture
+#                        used by the pulseaudio build scripts
+#   libpulse-dev       — PulseAudio client library headers. Required to compile
+#                        any PulseAudio module (provides pulse/pulseaudio.h)
+#   lsb-release        — Provides lsb_release command; the build script uses it
+#                        to detect the Ubuntu codename for fetching matching
+#                        PulseAudio source packages
+#   git                — Clones the pulseaudio-module-xrdp repository
+#   libtool            — GNU Libtool, manages shared library creation across
+#                        platforms. PulseAudio modules are .so shared objects
+#   libltdl-dev        — Libtool's dlopen() abstraction library headers.
+#                        Required by PulseAudio's module loading infrastructure
+#   sudo               — The install_pulseaudio_sources_apt.sh script uses sudo
+#                        internally to install build dependencies
+# -----------------------------------------------------------------------------
+ARG TAG=noble
+FROM ubuntu:$TAG AS builder
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-install-recommends \
+        autoconf \
+        build-essential \
+        ca-certificates \
+        dpkg-dev \
+        libpulse-dev \
+        lsb-release \
+        git \
+        libtool \
+        libltdl-dev \
+        sudo && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/neutrinolabs/pulseaudio-module-xrdp.git /pulseaudio-module-xrdp
+WORKDIR /pulseaudio-module-xrdp
+RUN scripts/install_pulseaudio_sources_apt.sh && \
+    ./bootstrap && \
+    ./configure PULSE_DIR=$HOME/pulseaudio.src && \
+    make && \
+    make install DESTDIR=/tmp/install
+
+# -----------------------------------------------------------------------------
+# STAGE 2: Final image — XFCE Desktop + Full CI/CD Toolchain
+# -----------------------------------------------------------------------------
+FROM ubuntu:$TAG
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# --- Version pins (from Dockerfile01) ---
+ENV PYTHON_VERSION=3.12
+ENV NODE_MAJOR=20
+ENV JAVA_VERSION=21
+ENV GRADLE_VERSION=9.4.1
+ENV MAVEN_VERSION=3.9.9
+ENV ANT_VERSION=1.10.17
+
+ENV ANDROID_SDK_TOOLS_VERSION=11076708
+ENV ANDROID_PLATFORM_VERSION=36
+ENV ANDROID_BUILD_TOOLS_VERSION=36.0.0
+ENV ANDROID_AVD_NAME=automation_device
+ENV ANDROID_AVD_DEVICE=pixel_6
+ENV ANDROID_GPU_MODE=off
+ENV ANDROID_EMULATOR_PACKAGE_X86="system-images;android-36;google_apis;x86_64"
+ENV ANDROID_EMULATOR_PACKAGE_ARM="system-images;android-36;google_apis;arm64-v8a"
+
+# -----------------------------------------------------------------------------
+# 1. XFCE DESKTOP + xRDP (from Dockerfile02)
+#
+# Installs a lightweight Xubuntu desktop environment accessible over RDP.
+#
+#   dbus-x11               — D-Bus session bus launcher for X11. Required by
+#                            XFCE and most GTK apps to communicate over the
+#                            desktop message bus (notifications, settings, etc.)
+#   locales                — Locale generation tools. We run locale-gen to
+#                            create en_US.UTF-8 so apps render text correctly
+#   pavucontrol            — PulseAudio Volume Control GUI. Lets users manage
+#                            audio sinks/sources from the desktop tray
+#   pulseaudio             — The PulseAudio sound server daemon. Handles audio
+#                            mixing and routing; xrdp modules redirect its
+#                            output over the RDP channel
+#   pulseaudio-utils       — CLI tools for PulseAudio (pactl, paplay, parec).
+#                            Useful for scripting audio tests and diagnostics
+#   sudo                   — Allows the non-root 'ubuntu' user to run
+#                            privileged commands inside the container
+#   vim                    — Terminal text editor for quick config edits
+#                            inside the RDP session
+#   x11-xserver-utils      — X11 utilities (xrandr, xdpyinfo, xset). xrandr
+#                            is needed to resize the desktop dynamically
+#   xfce4                  — Core XFCE desktop: panel, window manager (xfwm4),
+#                            session manager, file manager (Thunar), settings
+#   xfce4-goodies          — Extra XFCE plugins: clipboard manager, screenshooter,
+#                            task manager, weather plugin, whisker menu, etc.
+#   xfce4-pulseaudio-plugin — XFCE panel plugin that shows a volume icon and
+#                            integrates with PulseAudio for quick volume control
+#   xorgxrdp               — Xorg video/input drivers for xrdp. Renders the
+#                            desktop directly into the RDP framebuffer instead
+#                            of using VNC as a backend (better performance)
+#   xrdp                   — The RDP server daemon. Listens on port 3389 and
+#                            serves the XFCE desktop session to any RDP client
+#                            (Windows Remote Desktop, Remmina, FreeRDP, etc.)
+#   xubuntu-icon-theme     — Xubuntu's icon set (elementary-xfce). Gives the
+#                            desktop a polished look matching stock Xubuntu
+#   firefox                — Web browser, installed from the mozillateam PPA
+#                            to get the native .deb instead of the snap version
+#                            (snaps don't work in Docker)
+# -----------------------------------------------------------------------------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        dbus-x11 \
+        locales \
+        pavucontrol \
+        pulseaudio \
+        pulseaudio-utils \
+        sudo \
+        vim \
+        x11-xserver-utils \
+        xfce4 \
+        xfce4-goodies \
+        xfce4-pulseaudio-plugin \
+        xorgxrdp \
+        xrdp \
+        xubuntu-icon-theme && \
+    add-apt-repository -y ppa:mozillateam/ppa && \
+    echo "Package: *"  > /etc/apt/preferences.d/mozilla-firefox && \
+    echo "Pin: release o=LP-PPA-mozillateam" >> /etc/apt/preferences.d/mozilla-firefox && \
+    echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/mozilla-firefox && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends firefox && \
+    rm -rf /var/lib/apt/lists/* && \
+    (deluser --remove-home ubuntu 2>/dev/null || true) && \
+    locale-gen en_US.UTF-8
+
+# -----------------------------------------------------------------------------
+# 2. SYSTEM DEPENDENCIES, PYTHON, JAVA (from Dockerfile01)
+#
+# CORE TOOLS:
+#   software-properties-common — Provides add-apt-repository for managing PPAs
+#   build-essential        — Meta-package: GCC, G++, make, dpkg-dev, libc-dev.
+#                            Required to compile any C/C++ code or pip packages
+#                            with native extensions
+#   parallel               — GNU Parallel, runs shell commands in parallel.
+#                            Useful for parallelizing test runs across devices
+#   curl                   — CLI HTTP client for downloading files and APIs
+#   htop                   — Interactive process viewer (better than top).
+#                            Handy for monitoring resource usage in the container
+#   wget                   — Non-interactive HTTP downloader. Used to fetch
+#                            Gradle, Maven, Ant, and Android SDK archives
+#   g++                    — GNU C++ compiler. Needed by native Node.js addons
+#                            and C++ pip packages (e.g., grpcio, numpy)
+#   apache2-utils          — Provides 'ab' (Apache Bench) for HTTP load testing
+#                            and 'htpasswd' for generating password hashes
+#   git                    — Version control. Required for cloning repos in CI
+#   ca-certificates        — Mozilla CA certificate bundle for HTTPS trust
+#   apt-transport-https    — Allows apt to fetch packages over HTTPS
+#   iputils-ping           — Provides 'ping' for network connectivity checks
+#   net-tools              — Provides 'ifconfig', 'netstat', 'route' for
+#                            network debugging inside the container
+#   unzip                  — Extracts .zip archives (Android SDK, Gradle, etc.)
+#   gnupg                  — GNU Privacy Guard, needed to verify GPG signatures
+#                            on apt repository keys (NodeSource, etc.)
+#
+# MEDIA & GRAPHICS:
+#   ffmpeg                 — Audio/video transcoding and streaming toolkit.
+#                            Used for video processing, screen recording, and
+#                            media format conversion in test pipelines
+#   libsm6                 — X11 Session Management library. Required by
+#                            OpenCV and other GUI-aware Python packages
+#   libxext6               — X11 miscellaneous extensions library. Dependency
+#                            for OpenCV, matplotlib, and X11 rendering
+#   libgl1                 — Mesa OpenGL library. Required by OpenCV's highgui
+#                            module and any app doing GPU-accelerated rendering
+#   openssl                — TLS/SSL toolkit and library. Used for certificate
+#                            generation, encryption, and HTTPS connections
+#   tk-dev                 — Tcl/Tk development headers. Required by Python's
+#                            tkinter module for GUI applications
+#   xz-utils               — XZ/LZMA compression tools. Needed to extract
+#                            .tar.xz archives (Python source, Node binaries)
+#   llvm                   — LLVM compiler infrastructure. Required by some
+#                            Python packages (e.g., llvmlite for Numba JIT)
+#   make                   — GNU Make build tool. Used by Makefiles in native
+#                            extensions and general build automation
+#
+# PYTHON C-EXTENSION BUILD HEADERS:
+#   libffi-dev             — Foreign Function Interface library headers.
+#                            Required by Python's ctypes and cffi packages
+#   libssl-dev             — OpenSSL development headers. Required to compile
+#                            Python's ssl and hashlib modules from source
+#   zlib1g-dev             — Zlib compression headers. Required by Python's
+#                            zlib module and pip's package decompression
+#   libncurses5-dev        — NCurses 5 headers. Required by Python's curses
+#   libncursesw5-dev       — NCurses wide-char headers. Required for Unicode
+#                            support in Python's curses module
+#   libreadline-dev        — GNU Readline headers. Required by Python's
+#                            readline module (interactive shell history/editing)
+#   libsqlite3-dev         — SQLite3 headers. Required by Python's sqlite3
+#                            module (built-in database support)
+#   libgdbm-dev            — GNU dbm headers. Required by Python's dbm.gnu
+#                            module for key-value file-based storage
+#   libdb5.3-dev           — Berkeley DB 5.3 headers. Required by Python's
+#                            dbm.bsd module
+#   libbz2-dev             — Bzip2 headers. Required by Python's bz2 module
+#                            for .bz2 compressed file handling
+#   libexpat1-dev          — Expat XML parser headers. Required by Python's
+#                            xml.parsers.expat module
+#   liblzma-dev            — LZMA compression headers. Required by Python's
+#                            lzma module for .xz file handling
+#   libnss3-dev            — Network Security Services headers. Required by
+#                            some crypto/TLS packages
+#   libc6-dev              — GNU C Library headers. Fundamental requirement
+#                            for compiling any C code on the system
+#
+# JAVA:
+#   openjdk-${JAVA_VERSION}-jdk-headless
+#                          — OpenJDK 21 (headless, no GUI deps). Provides
+#                            javac, java, jar, and the full JDK for compiling
+#                            and running Java/Kotlin/Gradle/Maven projects
+#
+# PYTHON:
+#   python${PYTHON_VERSION}     — CPython 3.12 interpreter
+#   python${PYTHON_VERSION}-dev — Python 3.12 C headers (Python.h). Required
+#                                 to compile C-extension pip packages
+#   python${PYTHON_VERSION}-venv — venv module for creating isolated virtual
+#                                  environments
+#   python3-pip            — pip package installer for Python
+#   python3-full           — Full Python 3 standard library including ensurepip,
+#                            venv bootstrapping, and all optional stdlib modules
+#   python3-behave         — BDD testing framework (Gherkin syntax). Used for
+#                            behavior-driven test automation
+#   python3-launchpadlib   — Launchpad API client. Required by add-apt-repository
+#                            to interact with Ubuntu PPAs
+#
+# ANDROID EMULATOR / X11 RUNTIME LIBS:
+#   libpulse0              — PulseAudio client library. The Android emulator
+#                            links against it even in headless/no-audio mode
+#   libx11-6               — Core X11 client library. Required by the emulator
+#                            and any X11-aware application
+#   libxcomposite1         — X11 Composite extension. Enables off-screen
+#                            rendering used by compositing window managers
+#   libxcursor1            — X11 cursor management library
+#   libxdamage1            — X11 Damage extension. Tracks changed screen
+#                            regions for efficient repainting
+#   libxfixes3             — X11 Fixes extension. Provides cursor visibility
+#                            control and region operations
+#   libxi6                 — X11 Input extension. Handles advanced input
+#                            devices (multi-touch, tablets)
+#   libxrandr2             — X11 Resize and Rotate extension. Required for
+#                            dynamic screen resolution changes
+#   libxrender1            — X11 Render extension. Hardware-accelerated 2D
+#                            rendering (anti-aliased text, gradients)
+#   libxtst6               — X11 Testing extension (XTEST). Enables synthetic
+#                            input events for UI test automation
+#   libasound2t64          — ALSA sound library (64-bit time_t variant for
+#                            Noble). The Android emulator requires it even
+#                            when running with -no-audio
+#   libglu1-mesa           — Mesa OpenGL Utility library. Provides gluLookAt,
+#                            gluPerspective, etc. for 3D rendering
+#   mesa-utils             — Mesa GL utilities (glxinfo, glxgears). Useful for
+#                            verifying OpenGL support inside the container
+#
+# VIRTUALIZATION:
+#   qemu-kvm               — QEMU with KVM acceleration. Required to run the
+#                            Android emulator with hardware virtualization
+#                            (host must expose /dev/kvm to the container)
+#   libvirt-clients        — CLI tools for libvirt (virsh, virt-host-validate).
+#                            Useful for managing VMs and checking KVM status
+#   libvirt-daemon-system  — System-level libvirt daemon and default configs.
+#                            Manages QEMU/KVM VMs via the libvirtd service
+#   libvirt-daemon         — Core libvirt daemon. Provides the virtualization
+#                            management API that libvirt-clients talk to
+#   virtinst               — CLI tools for creating VMs (virt-install,
+#                            virt-clone). Useful if you need to spin up
+#                            additional VMs inside the container
+#   bridge-utils           — Linux bridge management (brctl). Required for
+#                            setting up bridged networking for VMs
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    software-properties-common build-essential parallel curl htop wget g++ \
+    apache2-utils git ca-certificates apt-transport-https iputils-ping net-tools unzip gnupg \
+    ffmpeg libsm6 libxext6 libgl1 openssl tk-dev xz-utils llvm make \
+    libffi-dev libssl-dev zlib1g-dev libncurses5-dev libncursesw5-dev \
+    libreadline-dev libsqlite3-dev libgdbm-dev libdb5.3-dev libbz2-dev \
+    libexpat1-dev liblzma-dev libnss3-dev libc6-dev \
+    openjdk-${JAVA_VERSION}-jdk-headless \
+    python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv python3-pip python3-full \
+    python3-behave python3-launchpadlib \
+    libpulse0 libx11-6 libxcomposite1 libxcursor1 libxdamage1 \
+    libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 \
+    libasound2t64 libglu1-mesa mesa-utils \
+    qemu-kvm libvirt-clients libvirt-daemon-system libvirt-daemon virtinst bridge-utils \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2b. DESKTOP APPS & UTILITIES (VM replacement extras)
+#
+# These packages make the container feel like a full desktop VM, providing
+# the same productivity tools you'd find on a stock Xubuntu installation.
+#
+#   xorg                   — Full X.Org display server meta-package. Pulls in
+#                            the X server, input drivers, and video drivers.
+#                            Ensures all X11 apps can render properly even
+#                            without xrdp's Xorg module
+#   gedit                  — GNOME text editor. Lightweight GUI editor with
+#                            syntax highlighting for quick file edits
+#   libreoffice            — Full office suite (Writer, Calc, Impress, Draw).
+#                            Drop-in replacement for Microsoft Office
+#   gnome-terminal         — GNOME Terminal emulator. Provides a tabbed
+#                            terminal with profile support (alternative to
+#                            XFCE's default xfce4-terminal)
+#   gnome-online-accounts  — GNOME Online Accounts integration. Enables
+#                            connecting to Google, Microsoft, Nextcloud, etc.
+#                            for calendar/contacts/file sync from the desktop
+#   zip                    — ZIP compression utility. Creates .zip archives
+#                            from the command line (complements unzip)
+#   file-roller            — GNOME archive manager GUI. Opens/creates .zip,
+#                            .tar.gz, .7z, .rar archives with drag-and-drop
+#   transmission           — BitTorrent client (GTK GUI). Lightweight torrent
+#                            downloader for fetching large files/ISOs
+#   cheese                 — GNOME webcam application. Captures photos/video
+#                            from a webcam (useful for testing camera passthrough)
+#   eog                    — Eye of GNOME image viewer. Opens PNG, JPEG, SVG,
+#                            etc. with zoom/rotate support
+#   gnome-mahjongg         — Mahjongg solitaire tile game (because even devs
+#                            need a break)
+#   gnome-mines            — Minesweeper clone for GNOME
+#   rhythmbox              — GNOME music player. Plays local audio files and
+#                            internet radio; useful for testing audio output
+#   alsa-base              — ALSA base configuration files. Sets up the kernel
+#                            sound driver layer that PulseAudio sits on top of
+#   alsa-utils             — ALSA CLI utilities (alsamixer, aplay, arecord).
+#                            Low-level audio testing and volume control
+#   update-manager-core    — Ubuntu update manager backend. Provides
+#                            do-release-upgrade for upgrading the Ubuntu version
+#                            and unattended-upgrades support
+#   easyeffects            — PipeWire/PulseAudio audio effects processor
+#                            (equalizer, compressor, reverb). Successor to
+#                            pulseeffects, which is no longer available on Noble
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    xorg \
+    gedit \
+    libreoffice \
+    gnome-terminal \
+    gnome-online-accounts \
+    zip \
+    file-roller \
+    transmission \
+    cheese \
+    eog \
+    gnome-mahjongg \
+    gnome-mines \
+    rhythmbox \
+    alsa-base \
+    alsa-utils \
+    update-manager-core \
+    easyeffects \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2c. ADDITIONAL XUBUNTU DESKTOP PACKAGES
+#
+# Packages that a stock Xubuntu ISO includes but were missing from the base
+# Dockerfile02 setup. Only safe-to-install packages are listed here — anything
+# that requires systemd, snapd, or real hardware has been excluded.
+#
+# PRINTING & SCANNING:
+#   cups                   — Common UNIX Printing System. Manages local and
+#                            network printers. Useful if you connect to a
+#                            network printer from inside the container
+#   cups-bsd               — BSD-compatible lpr/lpq commands for CUPS. Some
+#                            legacy tools and scripts expect these commands
+#   system-config-printer  — GTK GUI for managing CUPS printers. Adds/removes
+#                            printers, configures print queues from the desktop
+#   simple-scan            — GNOME document scanner GUI. Interfaces with
+#                            scanners via SANE (useful for network scanners)
+#
+# NETWORKING & CONNECTIVITY:
+#   openssh-client         — SSH client (ssh, scp, sftp). Connect to remote
+#                            servers from inside the container
+#   openssh-server         — SSH server daemon. Allows SSH access into the
+#                            container as an alternative to RDP
+#   sshfs                  — FUSE filesystem for mounting remote directories
+#                            over SSH. Mount remote folders as local paths
+#   rsync                  — Fast incremental file transfer. Essential for
+#                            syncing files between the container and remote hosts
+#   nfs-common             — NFS client utilities (mount.nfs). Mount NFS
+#                            network shares from inside the container
+#   samba-client           — SMB/CIFS client (smbclient). Access Windows/Samba
+#                            file shares from the command line
+#   gvfs-backends          — GNOME Virtual File System backends. Enables
+#                            Thunar/Nautilus to browse SMB, FTP, SFTP, MTP,
+#                            and other network locations via the file manager
+#
+# SYSTEM UTILITIES:
+#   gparted                — GNOME Partition Editor GUI. View and manage disk
+#                            partitions (useful for USB drives mounted into
+#                            the container)
+#   gnome-disk-utility     — GNOME Disks. View disk health (SMART), mount/
+#                            unmount partitions, create disk images
+#   baobab                 — GNOME Disk Usage Analyzer. Visual treemap of
+#                            disk space consumption per directory
+#   gnome-system-monitor   — GNOME System Monitor. GUI process manager and
+#                            resource monitor (CPU, RAM, disk, network graphs)
+#   gnome-calculator       — GNOME Calculator. Basic/scientific/programmer
+#                            calculator with unit conversion
+#   gnome-characters       — GNOME Characters. Unicode character map for
+#                            finding and copying special characters/emoji
+#   gnome-font-viewer      — GNOME Font Viewer. Preview and install .ttf/.otf
+#                            fonts from the file manager
+#   dconf-editor           — Low-level GNOME/XFCE settings editor. Edit
+#                            dconf/gsettings keys directly (power-user tool)
+#   synaptic               — GTK package manager GUI for apt. Browse, search,
+#                            install, and remove packages visually
+#   gdebi                  — GUI .deb package installer. Double-click a .deb
+#                            file to install it with dependency resolution
+#   menulibre              — Menu editor for XFCE/GNOME. Add, remove, or
+#                            rearrange application menu entries
+#   catfish                — XFCE file search utility. Fast indexed search
+#                            across the filesystem from the desktop
+#
+# FONTS & APPEARANCE:
+#   fonts-liberation       — Liberation font family (metrically compatible
+#                            with Arial, Times New Roman, Courier New).
+#                            Ensures documents render correctly
+#   fonts-dejavu-core      — DejaVu font family. High-quality Unicode font
+#                            with broad glyph coverage (default in many Linux
+#                            desktops)
+#   fonts-noto-color-emoji — Google Noto Color Emoji. Full-color emoji font
+#                            so emoji render in browsers and text editors
+#   fonts-ubuntu           — Ubuntu font family. The default UI font for
+#                            Ubuntu/Xubuntu desktops
+#   arc-theme              — Arc GTK theme. Popular flat theme for XFCE/GNOME
+#                            with dark and light variants
+#   papirus-icon-theme     — Papirus icon theme. Modern SVG icon set that
+#                            works well with XFCE and Arc theme
+#   numix-gtk-theme        — Numix GTK theme. Clean flat theme popular in
+#                            the Linux desktop community
+#
+# MEDIA & DOCUMENTS:
+#   vlc                    — VLC media player. Plays virtually any audio/video
+#                            format without needing extra codecs
+#   gimp                   — GNU Image Manipulation Program. Full-featured
+#                            raster image editor (Photoshop alternative)
+#   evince                 — GNOME Document Viewer. Opens PDF, DjVu, TIFF,
+#                            PostScript, and XPS documents
+#   shotwell               — GNOME photo manager. Import, organize, and do
+#                            basic edits on photos
+#   ubuntu-restricted-extras
+#                          — Meta-package that installs commonly needed codecs
+#                            and fonts: MP3/AAC decoders, Microsoft TrueType
+#                            core fonts, unrar, etc.
+#
+# DEVELOPMENT EXTRAS:
+#   meld                   — Visual diff and merge tool. Three-way file and
+#                            directory comparison with syntax highlighting
+#   gitk                   — Git repository browser GUI. Visualize commit
+#                            history, branches, and diffs
+#   git-gui                — Git GUI for staging, committing, and pushing.
+#                            Complements gitk for basic Git operations
+#   tig                    — Terminal-based Git log viewer. ncurses interface
+#                            for browsing commits, diffs, and blame
+#   tree                   — Recursive directory listing in tree format.
+#                            Quick way to visualize project structure
+#   jq                     — Command-line JSON processor. Parse, filter, and
+#                            transform JSON output from APIs and config files
+#   xmlstarlet             — Command-line XML toolkit. Query and edit XML
+#                            files (useful for Android manifests, pom.xml)
+#   shellcheck             — Static analysis tool for shell scripts. Catches
+#                            common bash/sh bugs and style issues
+#   strace                 — System call tracer. Debug what syscalls a process
+#                            makes (invaluable for diagnosing failures)
+#   lsof                   — List open files. Shows which processes have which
+#                            files/sockets/ports open
+#   tmux                   — Terminal multiplexer. Run multiple terminal
+#                            sessions inside a single window with detach/attach
+#   screen                 — GNU Screen terminal multiplexer. Alternative to
+#                            tmux for persistent terminal sessions
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    cups cups-bsd system-config-printer simple-scan \
+    openssh-client openssh-server sshfs rsync nfs-common samba-client gvfs-backends \
+    gparted gnome-disk-utility baobab gnome-system-monitor \
+    gnome-calculator gnome-characters gnome-font-viewer \
+    dconf-editor synaptic gdebi menulibre catfish \
+    fonts-liberation fonts-dejavu-core fonts-noto-color-emoji fonts-ubuntu \
+    arc-theme papirus-icon-theme numix-gtk-theme \
+    vlc gimp evince shotwell ubuntu-restricted-extras \
+    meld gitk git-gui tig tree jq xmlstarlet shellcheck \
+    strace lsof tmux screen \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2d. DOCKER CLI & DOCKER COMPOSE (Docker-outside-of-Docker)
+#
+# Installs the Docker command-line client and Compose plugin so you can manage
+# Docker containers from inside this container. This does NOT install the
+# Docker daemon (dockerd) — instead, the CLI talks to the HOST's Docker daemon
+# via the mounted Unix socket.
+#
+# This pattern is called "Docker-outside-of-Docker" (DooD):
+#   - The container gets the docker CLI tools only
+#   - At runtime, you mount the host's /var/run/docker.sock into the container
+#   - Any `docker` commands inside the container execute on the HOST's daemon
+#   - This means containers started from inside this container are siblings,
+#     not nested children
+#
+# Why not Docker-in-Docker (DinD)?
+#   DinD runs a full Docker daemon inside the container, which requires
+#   --privileged mode and has known issues with storage drivers, cgroups,
+#   and security. DooD is simpler, faster, and more secure for most use cases.
+#
+# Why not Docker Desktop?
+#   Docker Desktop is an Electron GUI app that bundles its own VM (QEMU/
+#   HyperKit/WSL2) to run the daemon. A VM-inside-a-container doesn't work.
+#   The CLI + socket mount gives you the same functionality without the GUI.
+#
+# Installed packages:
+#   docker-ce-cli          — Docker Engine CLI (docker). The command-line
+#                            client for building images, running containers,
+#                            managing volumes/networks, and all other Docker
+#                            operations. Talks to dockerd over the Unix socket
+#   docker-compose-plugin  — Docker Compose v2 plugin. Adds the
+#                            `docker compose` subcommand (note: no hyphen)
+#                            for multi-container orchestration via
+#                            docker-compose.yml files
+#   docker-buildx-plugin   — Docker Buildx plugin. Extended build capabilities
+#                            including multi-platform builds (linux/amd64 +
+#                            linux/arm64), build cache management, and
+#                            BuildKit-powered Dockerfile features
+#
+# Runtime usage:
+#   # Mount the host Docker socket when starting the container:
+#   docker run -d -p 3389:3389 --device /dev/kvm -v /var/run/docker.sock:/var/run/docker.sock xubuntu-dev
+#
+#   # Then inside the container, docker commands work against the host:
+#   docker ps
+#   docker images
+#   docker compose up -d
+#   docker buildx build --platform linux/amd64,linux/arm64 .
+#
+#   # To let the non-root 'ubuntu' user run docker without sudo,
+#   # add them to the docker group (matching the host's docker GID):
+#   # Inside the container:
+#   sudo groupadd -g <HOST_DOCKER_GID> docker
+#   sudo usermod -aG docker ubuntu
+#   # Then re-login to the RDP session
+#
+# Security note:
+#   Mounting docker.sock gives the container full control over the host's
+#   Docker daemon. This is equivalent to root access on the host. Only do
+#   this in trusted environments (local dev, private CI runners).
+# -----------------------------------------------------------------------------
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+        | tee /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli docker-compose-plugin docker-buildx-plugin \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 3. NODE.JS & NPM (LTS via NodeSource)
+#
+# Installs Node.js from the official NodeSource repository instead of Ubuntu's
+# outdated package. This gives us a pinned LTS version (NODE_MAJOR=20) with
+# npm included. The NodeSource GPG key is stored in /etc/apt/keyrings/ for
+# secure apt verification.
+#
+# Why not the Ubuntu nodejs package?
+#   Ubuntu's default nodejs is often several major versions behind and ships
+#   without npm. NodeSource provides current LTS with npm bundled.
+#
+#   nodejs                 — Node.js JavaScript runtime (v20 LTS). Includes
+#                            npm (Node Package Manager) for installing JS
+#                            dependencies. Used by the jsLibrary test suite
+#                            in this project and general JS/TS development
+# -----------------------------------------------------------------------------
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install nodejs -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 4. BUILD TOOLS: Gradle, Maven, Ant (from Dockerfile01)
+#
+# Installed from official binary distributions (not apt) to guarantee exact
+# version pinning and checksum verification. Each binary is symlinked into
+# /usr/bin for global PATH access.
+#
+#   gradle (${GRADLE_VERSION})
+#       — Groovy/Kotlin-based build automation tool. The standard build system
+#         for Android projects and modern Java/Kotlin applications. Downloaded
+#         as a .zip with SHA-256 checksum verification.
+#
+#   maven (${MAVEN_VERSION})
+#       — Apache Maven, XML-based (pom.xml) build and dependency management
+#         tool. The traditional standard for Java enterprise projects.
+#         Downloaded as .tar.gz with SHA-512 checksum verification.
+#
+#   ant (${ANT_VERSION})
+#       — Apache Ant, XML-based (build.xml) build tool. Used by legacy Java
+#         projects and some Android build pipelines. Downloaded as .tar.gz
+#         with SHA-512 checksum verification.
+# -----------------------------------------------------------------------------
+RUN wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -P /tmp \
+    && wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip.sha256 -O /tmp/gradle.sha256 \
+    && echo "$(cat /tmp/gradle.sha256)  /tmp/gradle-${GRADLE_VERSION}-bin.zip" | sha256sum -c - \
+    && unzip -qd /opt/gradle /tmp/gradle-${GRADLE_VERSION}-bin.zip \
+    && ln -s /opt/gradle/gradle-${GRADLE_VERSION}/bin/gradle /usr/bin/gradle
+
+RUN wget -q https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz -P /tmp \
+    && wget -q https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz.sha512 -O /tmp/maven.sha512 \
+    && echo "$(cat /tmp/maven.sha512)  /tmp/apache-maven-${MAVEN_VERSION}-bin.tar.gz" | sha512sum -c - \
+    && tar -xzf /tmp/apache-maven-${MAVEN_VERSION}-bin.tar.gz -C /opt \
+    && ln -s /opt/apache-maven-${MAVEN_VERSION}/bin/mvn /usr/bin/mvn
+
+RUN wget -q https://archive.apache.org/dist/ant/binaries/apache-ant-${ANT_VERSION}-bin.tar.gz -P /tmp \
+    && wget -q https://archive.apache.org/dist/ant/binaries/apache-ant-${ANT_VERSION}-bin.tar.gz.sha512 -O /tmp/ant.sha512 \
+    && echo "$(cat /tmp/ant.sha512)  /tmp/apache-ant-${ANT_VERSION}-bin.tar.gz" | sha512sum -c - \
+    && tar -xzf /tmp/apache-ant-${ANT_VERSION}-bin.tar.gz -C /opt \
+    && ln -s /opt/apache-ant-${ANT_VERSION}/bin/ant /usr/bin/ant
+
+RUN rm -rf /tmp/*
+
+# -----------------------------------------------------------------------------
+# 5. ANDROID SDK & EMULATOR (from Dockerfile01)
+#
+# Installs the Android command-line tools, SDK platform, build-tools, platform-
+# tools (adb), the emulator binary, and a system image for running an Android
+# emulator inside the container.
+#
+# SDK Components installed via sdkmanager:
+#   platform-tools         — adb (Android Debug Bridge) and fastboot. adb is
+#                            the primary tool for communicating with Android
+#                            devices/emulators (install apps, shell access,
+#                            logcat, port forwarding)
+#   build-tools;${ANDROID_BUILD_TOOLS_VERSION}
+#                          — Android build tools (aapt2, d8/r8, zipalign,
+#                            apksigner). Required to compile, optimize, and
+#                            sign APKs
+#   platforms;android-${ANDROID_PLATFORM_VERSION}
+#                          — Android API level 36 (Android 16) framework stubs.
+#                            Required to compile apps targeting this API level
+#   emulator               — Android Emulator binary. Runs AVDs (Android
+#                            Virtual Devices) using QEMU with KVM acceleration
+#   system-images          — Android system image for the emulator. x86_64 on
+#                            Intel/AMD hosts, arm64-v8a on ARM hosts. Includes
+#                            Google APIs (Play Services stubs)
+#
+# AVD (Android Virtual Device):
+#   A default AVD named ${ANDROID_AVD_NAME} is pre-created using the
+#   ${ANDROID_AVD_DEVICE} hardware profile (Pixel 6) so the emulator can be
+#   launched immediately without manual setup.
+#
+# IMPORTANT: The emulator requires KVM hardware acceleration on the host.
+#   - The Docker host must have KVM enabled (check: ls /dev/kvm)
+#   - Run the container with: --device /dev/kvm
+#   - Without KVM the emulator falls back to software rendering (very slow)
+#
+# GPU MODES for the -gpu flag:
+#   -gpu off                   → No GPU, pure CPU rendering (fastest for CI)
+#   -gpu swiftshader_indirect  → Software GPU via SwiftShader (if tests need GL)
+#   -gpu host                  → Host GPU passthrough (needs X11 + GPU on host)
+# -----------------------------------------------------------------------------
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=${ANDROID_HOME}
+ENV PATH=$PATH:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator
+
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && wget -q https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_SDK_TOOLS_VERSION}_latest.zip -O /tmp/cmdline-tools.zip \
+    && unzip -qd ${ANDROID_HOME}/cmdline-tools /tmp/cmdline-tools.zip \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
+    && rm /tmp/cmdline-tools.zip
+
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 && sdkmanager --update
+
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "arm64" ]; then \
+         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
+       else \
+         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
+       fi \
+    && sdkmanager --install \
+         "platform-tools" \
+         "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
+         "platforms;android-${ANDROID_PLATFORM_VERSION}" \
+         "emulator" \
+         "${EMULATOR_PKG}"
+
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "arm64" ]; then \
+         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
+       else \
+         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
+       fi \
+    && echo "no" | avdmanager create avd \
+         -n "${ANDROID_AVD_NAME}" \
+         -k "${EMULATOR_PKG}" \
+         --device "${ANDROID_AVD_DEVICE}" \
+         --force
+
+# -----------------------------------------------------------------------------
+# 6. FINAL ENVIRONMENT CONFIGURATION
+#
+# JAVA_HOME:
+#   Set dynamically based on CPU architecture via a symlink at
+#   /usr/lib/jvm/java-openjdk → /usr/lib/jvm/java-21-openjdk-{amd64|arm64}.
+#   This avoids hardcoding the arch in ENV and works on both x86 and ARM.
+#
+# LANG:
+#   Set to en_US.UTF-8 so all applications default to UTF-8 encoding.
+#   The locale was generated in section 1 (locale-gen en_US.UTF-8).
+#
+# python3 symlink:
+#   Points /usr/bin/python3 → /usr/bin/python3.12 so that 'python3' always
+#   invokes our pinned version regardless of any other Python versions present.
+#
+# PulseAudio xrdp modules:
+#   Copied from the builder stage. The autostart desktop entry is patched to
+#   launch PulseAudio correctly within the xrdp session.
+#
+# entrypoint.sh:
+#   Creates the 'ubuntu' user (uid 1020, password 'ubuntu'), cleans stale
+#   xrdp PID files, starts xrdp-sesman, and runs xrdp in the foreground.
+# -----------------------------------------------------------------------------
+RUN ARCH=$(dpkg --print-architecture) \
+    && ln -sfn /usr/lib/jvm/java-${JAVA_VERSION}-openjdk-${ARCH} /usr/lib/jvm/java-openjdk
+
+ENV JAVA_HOME=/usr/lib/jvm/java-openjdk
+ENV PATH=$PATH:$JAVA_HOME/bin
+ENV LANG=en_US.UTF-8
+
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+
+# Copy pulseaudio xrdp modules from builder stage
+COPY --from=builder /tmp/install /
+RUN sed -i 's|^Exec=.*|Exec=/usr/bin/pulseaudio|' /etc/xdg/autostart/pulseaudio-xrdp.desktop
+
+# Copy entrypoint (same as Dockerfile02)
+COPY entrypoint.sh /usr/bin/entrypoint
+
+WORKDIR /app
+EXPOSE 3389/tcp
+ENTRYPOINT ["/usr/bin/entrypoint"]

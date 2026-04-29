@@ -1,0 +1,229 @@
+# =============================================================================
+# docker-compose-xubuntu.yml — Xubuntu (XFCE) Desktop VM in Docker
+# Built from: Dockerfile.xubuntu
+#
+# Runs a full Xubuntu desktop with CI/CD toolchain (Java, Node, Python,
+# Gradle, Maven, Ant, Android SDK, Docker CLI) inside a Docker container.
+# Connects via RDP (port 3389) using any Remote Desktop client.
+# =============================================================================
+#
+# ─── PREREQUISITES ───────────────────────────────────────────────────────────
+#
+#   KVM SUPPORT (required for Android emulator, optional for desktop):
+#     The Xubuntu desktop itself does NOT require KVM — it runs natively
+#     in the container. KVM is only needed if you plan to use the Android
+#     emulator inside the container.
+#
+#     Verify KVM on Linux:
+#       sudo apt install cpu-checker
+#       sudo kvm-ok
+#
+#     If you don't need the Android emulator, remove the /dev/kvm device
+#     mapping below.
+#
+#   DOCKER SOCKET (optional, for Docker CLI inside the container):
+#     If you want to run docker commands from inside the Xubuntu desktop,
+#     mount the host's Docker socket. This gives the container full control
+#     over the host's Docker daemon (security implications — see below).
+#
+# ─── QUICK START ─────────────────────────────────────────────────────────────
+#
+#   # Build and start:
+#   docker compose -f docker-compose-xubuntu.yml up -d --build
+#
+#   # Start (after first build):
+#   docker compose -f docker-compose-xubuntu.yml up -d
+#
+#   # Connect via RDP:
+#   Open your RDP client → localhost:3389
+#   Username: ubuntu
+#   Password: ubuntu
+#
+# ─── CONNECTING ──────────────────────────────────────────────────────────────
+#
+#   METHOD — RDP (Remote Desktop Protocol, port 3389):
+#
+#     Windows host:
+#       Press Win+R → type "mstsc" → Connect to: localhost:3389
+#       Or search for "Remote Desktop Connection" in Start menu
+#
+#     macOS host:
+#       Install "Windows App" (formerly Microsoft Remote Desktop) from App Store
+#       Add PC → PC name: localhost:3389
+#
+#     Linux host:
+#       xfreerdp /v:localhost:3389 /u:ubuntu /p:ubuntu
+#       Or use Remmina → New connection → RDP → Server: localhost:3389
+#
+#     Default RDP credentials:
+#       Username: ubuntu
+#       Password: ubuntu
+#
+# ─── LIFECYCLE COMMANDS ──────────────────────────────────────────────────────
+#
+#   # Build image + start container:
+#   docker compose -f docker-compose-xubuntu.yml up -d --build
+#
+#   # Start (image already built):
+#   docker compose -f docker-compose-xubuntu.yml up -d
+#
+#   # Stop (preserves container state):
+#   docker compose -f docker-compose-xubuntu.yml stop
+#
+#   # Restart (resumes from where you left off):
+#   docker compose -f docker-compose-xubuntu.yml start
+#
+#   # View logs:
+#   docker compose -f docker-compose-xubuntu.yml logs -f
+#
+#   # Remove container (named volumes persist):
+#   docker compose -f docker-compose-xubuntu.yml down
+#
+#   # Remove container + named volumes (full reset):
+#   docker compose -f docker-compose-xubuntu.yml down -v
+#
+#   # Rebuild after Dockerfile.xubuntu changes:
+#   docker compose -f docker-compose-xubuntu.yml up -d --build --force-recreate
+#
+# ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
+#
+#   The container's filesystem is ephemeral by default — if you remove the
+#   container, all data inside it is lost. To persist data, use volumes:
+#
+#   Named volume (xubuntu-home):
+#     Persists the ubuntu user's home directory (/home/ubuntu) across
+#     container stop/start/down/up cycles. This includes:
+#       - Desktop files, Documents, Downloads
+#       - Browser bookmarks and history
+#       - SSH keys (~/.ssh)
+#       - Git config (~/.gitconfig)
+#       - IDE settings, shell history, etc.
+#
+#   Bind mount (./shared → /home/ubuntu/shared):
+#     Exchange files between the host and the container. Files placed in
+#     ./shared on the host appear instantly in /home/ubuntu/shared inside
+#     the container, and vice versa.
+#
+#   Bind mount (./projects → /home/ubuntu/projects):
+#     Mount your host project directory into the container for development.
+#     Edit files from either side.
+#
+#   Persistence survives:
+#     ✅ docker compose stop / start
+#     ✅ docker compose down / up (named volumes persist)
+#     ✅ Host machine reboot
+#     ❌ docker compose down -v (deletes named volumes)
+#     ❌ Deleting bind mount folders on the host
+#
+# ─── SHARED FOLDER ───────────────────────────────────────────────────────────
+#
+#   The ./shared folder on the host is mounted at /home/ubuntu/shared
+#   inside the container. Use it to exchange files between host and VM.
+#   The folder is created automatically on first run.
+#
+# ─── DOCKER CLI INSIDE THE CONTAINER ─────────────────────────────────────────
+#
+#   Dockerfile.xubuntu includes docker-ce-cli, docker-compose-plugin, and
+#   docker-buildx-plugin. To use them, mount the host's Docker socket:
+#
+#     volumes:
+#       - /var/run/docker.sock:/var/run/docker.sock
+#
+#   Then inside the container:
+#     docker ps
+#     docker images
+#     docker compose up -d
+#
+#   To let the 'ubuntu' user run docker without sudo:
+#     sudo groupadd -g <HOST_DOCKER_GID> docker
+#     sudo usermod -aG docker ubuntu
+#     # Then re-login to the RDP session
+#
+#   SECURITY: Mounting docker.sock gives the container full control over
+#   the host's Docker daemon. Only do this in trusted environments.
+#
+# ─── ANDROID EMULATOR ────────────────────────────────────────────────────────
+#
+#   The image includes Android SDK, emulator, and a pre-created AVD.
+#   To start the emulator inside the container:
+#
+#     emulator -avd automation_device -no-window -no-audio -no-boot-anim -gpu off &
+#     adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
+#     adb devices
+#
+#   Requires /dev/kvm to be mounted (see devices section below).
+#
+# ─── SSH ACCESS (alternative to RDP) ─────────────────────────────────────────
+#
+#   The image includes openssh-server. To enable SSH access:
+#     1. Uncomment the port 22 mapping below
+#     2. Inside the container: sudo service ssh start
+#     3. From the host: ssh ubuntu@localhost -p 2222
+#
+# ─── CUSTOMIZING THE BUILD ───────────────────────────────────────────────────
+#
+#   The image is built from Dockerfile.xubuntu which uses ARG TAG=noble.
+#   To build with a different Ubuntu base (if Dockerfile.xubuntu supports it):
+#
+#     docker compose -f docker-compose-xubuntu.yml build \
+#         --build-arg TAG=jammy
+#
+# =============================================================================
+
+services:
+  xubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile.xubuntu
+      # Uncomment to override the Ubuntu base version:
+      # args:
+      #   TAG: noble
+    image: xubuntu-dev:latest
+    container_name: xubuntu-vm
+    hostname: xubuntu-vm
+
+    devices:
+      # /dev/kvm — KVM hardware acceleration for Android emulator.
+      #            Remove this line if you don't need the emulator.
+      - /dev/kvm
+
+    ports:
+      # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.
+      #         Username: ubuntu / Password: ubuntu
+      - 3389:3389/tcp
+      # Uncomment for SSH access (host port 2222 → container port 22):
+      # - 2222:22/tcp
+
+    volumes:
+      # ── Persistent home directory ────────────────────────────────────
+      # Named volume that preserves /home/ubuntu across container restarts.
+      # Includes Desktop, Documents, Downloads, SSH keys, shell history,
+      # browser data, IDE settings, and all user-level configuration.
+      - xubuntu-home:/home/ubuntu
+
+      # ── Shared folder (host ↔ container) ─────────────────────────────
+      # Bind mount for exchanging files between host and container.
+      # Files in ./shared on the host appear at /home/ubuntu/shared.
+      - ./shared:/home/ubuntu/shared
+
+      # ── Project directory (host ↔ container) ─────────────────────────
+      # Bind mount your project folder for development.
+      # Uncomment and adjust the host path:
+      # - ./projects:/home/ubuntu/projects
+
+      # ── Docker socket (for docker CLI inside container) ──────────────
+      # Uncomment to enable docker commands inside the container.
+      # SECURITY: Gives container full control over host Docker daemon.
+      # - /var/run/docker.sock:/var/run/docker.sock
+
+    # Restart policy — keeps the container running after host reboot
+    restart: unless-stopped
+
+    # Give xrdp and running processes time to shut down gracefully
+    stop_grace_period: 30s
+
+# Named volumes — persist across container stop/start/down/up.
+# Deleted only with: docker compose down -v
+volumes:
+  xubuntu-home:
+    name: xubuntu-home

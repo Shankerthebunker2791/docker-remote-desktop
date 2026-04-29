@@ -1,0 +1,267 @@
+# =============================================================================
+# docker-compose-macos.yml — macOS VM in Docker
+# Source: https://github.com/dockur/macos
+#
+# Runs a full macOS installation inside a Docker container using QEMU/KVM.
+# Unlike the Windows variant, macOS requires a manual installation process.
+#
+# IMPORTANT: Apple's EULA only permits running macOS on Apple hardware.
+#            Only use this on a Mac (Mac Mini, Mac Pro, MacBook, etc.).
+# =============================================================================
+#
+# ─── PREREQUISITES ───────────────────────────────────────────────────────────
+#
+#   APPLE HARDWARE (required by Apple EULA):
+#     This container must run on hardware sold by Apple. Running macOS on
+#     non-Apple hardware violates Apple's end-user license agreement.
+#
+#   KVM SUPPORT (required for acceptable performance):
+#
+#     Platform compatibility:
+#       ┌──────────────────┬───────┬───────┬───────┬───────┐
+#       │ Product          │ Linux │ Win11 │ Win10 │ macOS │
+#       ├──────────────────┼───────┼───────┼───────┼───────┤
+#       │ Docker CLI       │  ✅   │  ✅   │  ❌   │  ❌   │
+#       │ Docker Desktop   │  ❌   │  ✅   │  ❌   │  ❌   │
+#       │ Podman CLI       │  ✅   │  ✅   │  ❌   │  ❌   │
+#       │ Podman Desktop   │  ✅   │  ✅   │  ❌   │  ❌   │
+#       └──────────────────┴───────┴───────┴───────┴───────┘
+#
+#     Verify KVM on Linux:
+#       sudo apt install cpu-checker
+#       sudo kvm-ok
+#
+#     If kvm-ok fails, check:
+#       1. Intel VT-x or AMD SVM is enabled in BIOS
+#       2. "Nested virtualization" is enabled if running inside a VM
+#       3. Your cloud provider allows nested virtualization
+#       4. Try adding privileged: true to rule out permission issues
+#
+#   AMD PROCESSOR WARNING:
+#     If your system has an AMD CPU, start with CPU_CORES: "1" for the
+#     initial installation. Only increase cores after verifying stability
+#     on a single core first. AMD + multiple cores can cause issues during
+#     macOS install that are difficult to diagnose.
+#
+#   DISK SPACE:
+#     macOS recovery image is ~2-3 GB. After install, the VM disk needs
+#     ~25-40 GB. Ensure the host path for /storage has enough free space.
+#
+# ─── QUICK START ─────────────────────────────────────────────────────────────
+#
+#   # Start the VM:
+#   docker compose -f docker-compose-macos.yml up -d
+#
+#   # Open the installer in your browser:
+#   http://localhost:8006
+#
+#   # Follow the manual installation steps below.
+#
+# ─── INSTALLATION STEPS (manual, first run only) ────────────────────────────
+#
+#   1. Open http://localhost:8006 in your browser
+#   2. You'll see the macOS Recovery screen
+#   3. Choose "Disk Utility"
+#   4. Select the largest "Apple Inc. VirtIO Block Media" disk
+#   5. Click "Erase" → Format: APFS → Name: anything you like → "Erase"
+#   6. Close Disk Utility (red X or Disk Utility → Quit)
+#   7. Click "Reinstall macOS [version]"
+#   8. Agree to the license → Select the disk you just formatted
+#   9. Wait for files to copy and the VM to reboot (~20-45 min)
+#  10. After reboot, select your region and keyboard layout
+#  11. Migration Assistant → "Not Now" (bottom left)
+#  12. Apple ID → "Set Up Later" (bottom left) → "Skip"
+#  13. Create a Computer Account → fill in username and password
+#  14. Done — macOS desktop is ready
+#
+# ─── CONNECTING ──────────────────────────────────────────────────────────────
+#
+#   METHOD 1 — Web browser (noVNC, no client needed):
+#     http://localhost:8006
+#     Best for: installation, quick checks, when no VNC client is available.
+#
+#   METHOD 2 — VNC (better quality than web viewer):
+#
+#     macOS host:
+#       Finder menu → Go → Connect to Server → vnc://localhost:5900
+#       Or open "Screen Sharing" app → localhost:5900
+#
+#     Windows host:
+#       Install a VNC client (RealVNC Viewer, TightVNC, TigerVNC)
+#       Connect to: localhost:5900
+#
+#     Linux host:
+#       remmina → New connection → VNC → Server: localhost:5900
+#       Or: vncviewer localhost:5900
+#
+#   NOTE: macOS does not have built-in RDP server. VNC (port 5900) is the
+#         native remote desktop protocol for macOS. The web viewer on port
+#         8006 is an alternative that requires no client software.
+#
+# ─── LIFECYCLE COMMANDS ──────────────────────────────────────────────────────
+#
+#   # Start (first run downloads recovery image):
+#   docker compose -f docker-compose-macos.yml up -d
+#
+#   # Stop (graceful shutdown, saves macOS state):
+#   docker compose -f docker-compose-macos.yml stop
+#
+#   # Restart (resumes from where you left off, all data persists):
+#   docker compose -f docker-compose-macos.yml start
+#
+#   # View logs (useful during installation):
+#   docker compose -f docker-compose-macos.yml logs -f
+#
+#   # Remove container (data persists in ./macos-data):
+#   docker compose -f docker-compose-macos.yml down
+#
+#   # Recreate container (picks up config changes, data persists):
+#   docker compose -f docker-compose-macos.yml up -d --force-recreate
+#
+#   # Full reset (destroy everything, start fresh):
+#   docker compose -f docker-compose-macos.yml down
+#   rm -rf ./macos-data
+#   docker compose -f docker-compose-macos.yml up -d
+#
+# ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
+#
+#   All macOS data (virtual disk image, VM state, installed software,
+#   user files) is stored in ./macos-data on the host via the /storage
+#   volume mount. This survives:
+#     ✅ docker compose stop / start
+#     ✅ docker compose down / up
+#     ✅ docker compose restart
+#     ✅ Host machine reboot
+#     ❌ Deleting ./macos-data (this resets everything)
+#
+# ─── SHARED FOLDER ───────────────────────────────────────────────────────────
+#
+#   The ./shared folder on the host is mounted into the VM as /shared.
+#   To access it from inside macOS:
+#     Finder menu → Go → Computer
+#   The shared folder appears there with the contents of ./shared.
+#
+# ─── MACVLAN NETWORKING (individual IP) ──────────────────────────────────────
+#
+#   To give the macOS VM its own IP on your LAN (no port mapping needed):
+#
+#     # Create the macvlan network (once):
+#     docker network create -d macvlan --subnet=192.168.0.0/24 --gateway=192.168.0.1 --ip-range=192.168.0.100/28 -o parent=eth0 vlan
+#
+#     # Then add to compose:
+#     services:
+#       macos:
+#         ...
+#         networks:
+#           vlan:
+#             ipv4_address: 192.168.0.100
+#     networks:
+#       vlan:
+#         external: true
+#
+#   To let macOS get a DHCP IP from your router:
+#     environment:
+#       DHCP: "Y"
+#     devices:
+#       - /dev/vhost-net
+#     device_cgroup_rules:
+#       - 'c *:* rwm'
+#
+#   Note: macvlan IPs are NOT accessible from the Docker host itself.
+#
+# ─── USB PASSTHROUGH ─────────────────────────────────────────────────────────
+#
+#   To pass a USB device into the VM:
+#     1. Find vendor/product ID: lsusb
+#     2. Add to compose:
+#        environment:
+#          ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x1234"
+#        devices:
+#          - /dev/bus/usb
+#
+# ─── DISK PASSTHROUGH ────────────────────────────────────────────────────────
+#
+#   To pass physical disks/partitions directly:
+#     devices:
+#       - /dev/sdb:/disk1    # Main drive
+#       - /dev/sdc1:/disk2   # Secondary drive
+#
+# =============================================================================
+
+services:
+  macos:
+    image: dockurr/macos
+    container_name: macos-vm
+    environment:
+      # ── macOS Version ────────────────────────────────────────────────
+      # Default: "14" (macOS 14 Sonoma)
+      #
+      #   "15" = macOS 15 Sequoia (Apple ID sign-in not yet working)
+      #   "14" = macOS 14 Sonoma  (default, stable)
+      #   "13" = macOS 13 Ventura
+      #   "12" = macOS 12 Monterey
+      #   "11" = macOS 11 Big Sur
+      VERSION: "14"
+
+      # ── VM Resources ─────────────────────────────────────────────────
+      # Default: 1 CPU core, 4 GB RAM
+      # WARNING: On AMD processors, keep CPU_CORES at "1" during initial
+      #          installation. Increase only after verifying stability.
+      RAM_SIZE: "4G"
+      CPU_CORES: "2"
+
+      # ── Virtual Disk Size ────────────────────────────────────────────
+      # Default: 64 GB. Can be expanded later without data loss.
+      DISK_SIZE: "30G"
+
+      # ── DHCP (requires macvlan network) ──────────────────────────────
+      # Uncomment to let macOS get an IP from your router:
+      # DHCP: "Y"
+
+      # ── QEMU Arguments (advanced) ───────────────────────────────────
+      # Pass additional QEMU arguments (e.g., USB passthrough):
+      # ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x1234"
+
+    devices:
+      # /dev/kvm       — KVM hardware acceleration (required)
+      # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC
+      - /dev/kvm
+      - /dev/net/tun
+      # Uncomment for DHCP mode:
+      # - /dev/vhost-net
+      # Uncomment for USB passthrough:
+      # - /dev/bus/usb
+
+    cap_add:
+      # NET_ADMIN — required for the VM to configure its network interface
+      - NET_ADMIN
+
+    # Uncomment for DHCP mode:
+    # device_cgroup_rules:
+    #   - 'c *:* rwm'
+
+    ports:
+      # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
+      #         Best for installation and quick checks.
+      - 8006:8006
+      # 5900 — VNC (Virtual Network Computing). Access via any VNC client.
+      #         macOS uses VNC natively (not RDP). On a Mac host, use
+      #         Finder → Go → Connect to Server → vnc://localhost:5900
+      - 5900:5900/tcp
+      - 5900:5900/udp
+
+    volumes:
+      # /storage — Persistent VM disk image and state.
+      #            All macOS data lives here. Survives stop/start/down/up.
+      #            Delete this folder to completely reset the VM.
+      - ./macos-data:/storage
+      # /shared  — Shared folder. Access from Finder → Go → Computer.
+      #            Use to exchange files between host and VM.
+      - ./shared:/shared
+
+    # Restart policy — keeps the VM running after host reboot
+    restart: unless-stopped
+
+    # Give macOS 2 minutes to shut down gracefully before force-killing.
+    # macOS needs time to save state and flush disk writes.
+    stop_grace_period: 2m
