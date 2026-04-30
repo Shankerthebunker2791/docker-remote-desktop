@@ -280,15 +280,22 @@ services:
       # Pass additional QEMU arguments (e.g., USB passthrough):
       # ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x1234"
 
-    devices:
-      # /dev/kvm       — KVM hardware acceleration (required)
-      - /dev/kvm
-      # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC
-      - /dev/net/tun
-      # Uncomment for DHCP mode:
-      # - /dev/vhost-net
-      # Uncomment for USB passthrough:
-      # - /dev/bus/usb
+    # devices:
+    #   # ── LINUX ONLY - These devices are NOT available on macOS ─────────────
+    #   # /dev/kvm       — KVM hardware acceleration (Linux only)
+    #   # /dev/net/tun   — TUN/TAP networking for the VM's virtual NIC (Linux only)
+    #   #
+    #   # On macOS, this container will NOT work due to missing device nodes.
+    #   # Use Docker Desktop with Windows 11 instead (uses Apple Hypervisor.framework).
+    #   # Or use native macOS virtualization: UTM, VMware Fusion, or Parallels.
+    #   #
+    #   # Uncomment for Linux hosts:
+    #   - /dev/kvm
+    #   - /dev/net/tun
+    #   # Uncomment for DHCP mode on Linux:
+    #   - /dev/vhost-net
+    #   # Uncomment for USB passthrough on Linux:
+    #   - /dev/bus/usb
 
     cap_add:
       # NET_ADMIN — required for the VM to configure its network interface

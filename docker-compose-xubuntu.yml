@@ -180,13 +180,17 @@ services:
       #   TAG: noble
     image: xubuntu-dev:latest
     container_name: xubuntu-vm
+    user: root
     hostname: xubuntu-vm
+    shm_size: "2g"     # Shared memory size (required for some apps, e.g. Chrome)
 
-    devices:
-      # /dev/kvm — KVM hardware acceleration for Android emulator.
-      #            Remove this line if you don't need the emulator.
-      #            NOTE: /dev/kvm is only available on Linux hosts.
-      # - /dev/kvm
+    # devices:
+    #   # ── LINUX ONLY - /dev/kvm is NOT available on macOS ─────────────────
+    #   # /dev/kvm — KVM hardware acceleration for Android emulator.
+    #   #            Remove this line if you don't need the emulator.
+    #   #            NOTE: /dev/kvm is only available on Linux hosts.
+    #   #            On macOS, use native virtualization (UTM, VMware Fusion, Parallels).
+    #   - /dev/kvm
 
     ports:
       # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.
@@ -204,8 +208,8 @@ services:
 
       # ── Shared folder (host ↔ container) ─────────────────────────────
       # Bind mount for exchanging files between host and container.
-      # Files in ./shared on the host appear at /home/ubuntu/shared.
-      - ./shared:/home/ubuntu/shared
+      # Files in ./shared on the host appear at /shared in the container.
+      - ./shared:/shared
 
       # ── Project directory (host ↔ container) ─────────────────────────
       # Bind mount your project folder for development.
@@ -215,7 +219,7 @@ services:
       # ── Docker socket (for docker CLI inside container) ──────────────
       # Uncomment to enable docker commands inside the container.
       # SECURITY: Gives container full control over host Docker daemon.
-      # - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
 
     # Restart policy — keeps the container running after host reboot
     restart: unless-stopped
