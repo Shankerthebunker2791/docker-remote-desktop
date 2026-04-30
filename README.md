@@ -1,4 +1,4 @@
-# docker-remote-desktop
+# docker-desktop
 
 [![build](https://github.com/scottyhardy/docker-remote-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/scottyhardy/docker-remote-desktop/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/scottyhardy/docker-remote-desktop.svg?style=social)](https://github.com/scottyhardy/docker-remote-desktop/stargazers)
@@ -8,36 +8,42 @@
 
 Docker image with RDP server using [xrdp](https://www.xrdp.org) on Ubuntu with [Xfce](https://xfce.org).
 
-Images are built weekly using Ubuntu 24.04 (noble).
+Images are built using Ubuntu
 
 ## Getting Started
 
 Run with an interactive bash session:
 
 ```bash
-docker run -it \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3389:3389/tcp" \
-    --name="remote-desktop" \
-    scottyhardy/docker-remote-desktop:latest /bin/bash
+docker run -it --rm \
+  --user root \
+  --name="xubuntu-vm" \
+  --hostname="$(hostname)" \
+  --publish="3389:3389/tcp" \
+  --shm-size="2g" \
+  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+  --mount type=bind,source=/Users/shankerthebunker/shared,target=/shared \
+  xubuntu-dev:latest /bin/bash
 ```
 
 Start as a detached daemon:
 
 ```bash
-docker run --detach \
-    --rm \
-    --hostname="$(hostname)" \
-    --publish="3389:3389/tcp" \
-    --name="remote-desktop" \
-    scottyhardy/docker-remote-desktop:latest
+docker run --detach --rm \
+  --user root \
+  --name="xubuntu-vm" \
+  --hostname="$(hostname)" \
+  --publish="3389:3389/tcp" \
+  --shm-size="2g" \
+  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+  --mount type=bind,source=/Users/shankerthebunker/shared,target=/shared \
+  xubuntu-dev:latest /bin/bash
 ```
 
 Stop the detached container:
 
 ```bash
-docker kill remote-desktop
+ddocker kill xubuntu-vm
 ```
 
 Download the latest version of the image:
@@ -69,7 +75,7 @@ Password: ubuntu
 Clone the GitHub repository:
 
 ```bash
-git clone https://github.com/scottyhardy/docker-remote-desktop.git
+git clone https://github.com/Shankerthebunker2791/docker-remote-desktop.git
 cd docker-remote-desktop
 ```
 
@@ -82,7 +88,7 @@ Build the image with the supplied script:
 Or run the following docker command:
 
 ```bash
-docker build -t docker-remote-desktop .
+docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
 ```
 
 ## Running local images with scripts

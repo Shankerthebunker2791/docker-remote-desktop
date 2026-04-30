@@ -5,6 +5,17 @@ if ! id ubuntu >/dev/null 2>&1; then
     groupadd --gid 1020 ubuntu
     useradd --shell /bin/bash --uid 1020 --gid 1020 --groups sudo --password "$(openssl passwd ubuntu)" --create-home --home-dir /home/ubuntu ubuntu
 fi
+#     useradd --shell /bin/bash --uid 1020 --gid 1020 --groups sudo --create-home --home-dir /home/ubuntu ubuntu
+# fi
+
+# # Configure passwordless sudo for ubuntu user
+# echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu
+# chmod 440 /etc/sudoers.d/ubuntu
+
+# # Configure XFCE session for xrdp
+# echo "xfce4-session" > /home/ubuntu/.xsession
+# chown ubuntu:ubuntu /home/ubuntu/.xsession
+# chmod 600 /home/ubuntu/.xsession
 
 # Remove existing sesman/xrdp PID files to prevent rdp sessions hanging on container restart
 [ ! -f /var/run/xrdp/xrdp-sesman.pid ] || rm -f /var/run/xrdp/xrdp-sesman.pid
