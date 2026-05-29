@@ -123,6 +123,8 @@
 #   rm -rf ./macos-data
 #   docker compose -f docker-compose-macos.yml up -d
 #
+#   docker logs -f macos-vm
+#
 # ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
 #
 #   All macOS data (virtual disk image, VM state, installed software,
@@ -193,15 +195,16 @@ services:
     image: dockurr/macos
     container_name: macos-vm
     environment:
+      KVM: "N"  # <--- THIS LINE TO DISABLE THE KVM CHECK
       # ── macOS Version ────────────────────────────────────────────────
       # Default: "14" (macOS 14 Sonoma)
       #
       #   "15" = macOS 15 Sequoia (Apple ID sign-in not yet working)
-      #   "14" = macOS 14 Sonoma  (default, stable)
-      #   "13" = macOS 13 Ventura
-      #   "12" = macOS 12 Monterey
-      #   "11" = macOS 11 Big Sur
-      VERSION: "14"
+      #   "14" = macOS 14 Sonoma  (default, stable) # Very heavy; optimized for Apple Silicon, not Intel emulation.
+      #   "13" = macOS 13 Ventura.  # Introduced a massive overhaul of System Settings and more "Stage Manager" overhead.
+      #   "12" = macOS 12 Monterey  # Stable, but introduces more background sync services.
+      #   "11" = macOS 11 Big Sur   # Smallest OS footprint; fewer modern "security" checks slowing down the kernel.
+      VERSION: "11"
 
       # ── VM Resources ─────────────────────────────────────────────────
       # Default: 1 CPU core, 4 GB RAM
@@ -250,11 +253,12 @@ services:
       # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
       #         Best for installation and quick checks.
       - 8006:8006
-      # 5900 — VNC (Virtual Network Computing). Access via any VNC client.
+      # 5901 — VNC (Virtual Network Computing). Access via any VNC client.
       #         macOS uses VNC natively (not RDP). On a Mac host, use
-      #         Finder → Go → Connect to Server → vnc://localhost:5900
-      - 5900:5900/tcp
-      - 5900:5900/udp
+      #
+      # Now on 5901 to avoid native Screen Sharing conflict
+      # Finder → Go → Connect to Server → vnc://localhost:5901
+      - 5901:5900/tcp
 
     volumes:
       # /storage — Persistent VM disk image and state.

@@ -103,6 +103,8 @@
 #   rm -rf ./windows-data
 #   docker compose -f docker-compose-windows.yml up -d
 #
+#   docker logs -f windows-vm
+#
 # ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
 #
 #   All Windows data (virtual disk image, VM state, installed software,
@@ -207,6 +209,7 @@ services:
     image: dockurr/windows
     container_name: windows-vm
     environment:
+      KVM: "N"  # <--- THIS LINE TO DISABLE THE KVM CHECK
       # ── Windows Version ──────────────────────────────────────────────
       # Default: "11" (Windows 11 Pro, 7.2 GB download)
       #
@@ -306,13 +309,14 @@ services:
     #   - 'c *:* rwm'
 
     ports:
-      # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
+      # 8009 — Web-based viewer (noVNC). Access via http://localhost:8009
       #         Best for installation monitoring and quick checks.
-      - 8006:8006
-      # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.
+      # Changed host port to 8009 to ensure it is free
+      - 8009:8006
+      # 3390 — RDP (Remote Desktop Protocol). Access via any RDP client.
       #         Provides full audio, clipboard, and resolution support.
-      - 3389:3389/tcp
-      - 3389:3389/udp
+      # Changed host port to 3390 to avoid RDP conflicts
+      - 3390:3389/tcp
 
     volumes:
       # /storage — Persistent VM disk image and state.
@@ -321,7 +325,7 @@ services:
       - ./windows-data:/storage
       # /shared  — Shared folder. Appears as "Shared" on the Windows desktop.
       #            Use to exchange files between host and VM.
-      - ./shared:/shared
+      # - ./shared:/shared
       # Uncomment for additional disks:
       # - ./disk2:/storage2
       # - ./disk3:/storage3

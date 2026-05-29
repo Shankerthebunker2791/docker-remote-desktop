@@ -85,6 +85,8 @@
 #   # Rebuild after Dockerfile.xubuntu changes:
 #   docker compose -f docker-compose-xubuntu.yml up -d --build --force-recreate
 #
+#   docker logs -f xubuntu-vm
+#
 # ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
 #
 #   The container's filesystem is ephemeral by default — if you remove the
@@ -193,18 +195,23 @@ services:
     #   - /dev/kvm
 
     ports:
-      # 3389 — RDP (Remote Desktop Protocol). Access via any RDP client.
+      # 3392 — RDP (Remote Desktop Protocol). Access via any RDP client.
       #         Username: ubuntu / Password: ubuntu
-      - 3389:3389/tcp
+      - 3392:3389/tcp
       # Uncomment for SSH access (host port 2222 → container port 22):
       # - 2222:22/tcp
+
+    environment:
+      # Even though this is a standard container, if it runs a 
+      # nested VM (like an Android Emulator), it needs this:
+      KVM: "N"
 
     volumes:
       # ── Persistent home directory ────────────────────────────────────
       # Named volume that preserves /home/ubuntu across container restarts.
       # Includes Desktop, Documents, Downloads, SSH keys, shell history,
       # browser data, IDE settings, and all user-level configuration.
-      - xubuntu-home:/home/ubuntu
+      # - xubuntu-home:/home/ubuntu
 
       # ── Shared folder (host ↔ container) ─────────────────────────────
       # Bind mount for exchanging files between host and container.
