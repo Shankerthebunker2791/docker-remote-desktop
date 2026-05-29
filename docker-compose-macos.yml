@@ -83,18 +83,18 @@
 #   METHOD 2 — VNC (better quality than web viewer):
 #
 #     macOS host:
-#       Finder menu → Go → Connect to Server → vnc://localhost:5900
-#       Or open "Screen Sharing" app → localhost:5900
+#       Finder menu → Go → Connect to Server → vnc://localhost:5901
+#       Or open "Screen Sharing" app → localhost:5901
 #
 #     Windows host:
 #       Install a VNC client (RealVNC Viewer, TightVNC, TigerVNC)
-#       Connect to: localhost:5900
+#       Connect to: localhost:5901
 #
 #     Linux host:
-#       remmina → New connection → VNC → Server: localhost:5900
-#       Or: vncviewer localhost:5900
+#       remmina → New connection → VNC → Server: localhost:5901
+#       Or: vncviewer localhost:5901
 #
-#   NOTE: macOS does not have built-in RDP server. VNC (port 5900) is the
+#   NOTE: macOS does not have built-in RDP server. VNC (port 5901) is the
 #         native remote desktop protocol for macOS. The web viewer on port
 #         8006 is an alternative that requires no client software.
 #

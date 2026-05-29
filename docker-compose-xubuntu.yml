@@ -35,25 +35,25 @@
 #   docker compose -f docker-compose-xubuntu.yml up -d
 #
 #   # Connect via RDP:
-#   Open your RDP client → localhost:3389
+#   Open your RDP client → localhost:3392
 #   Username: ubuntu
 #   Password: ubuntu
 #
 # ─── CONNECTING ──────────────────────────────────────────────────────────────
 #
-#   METHOD — RDP (Remote Desktop Protocol, port 3389):
+#   METHOD — RDP (Remote Desktop Protocol, port 3392):
 #
 #     Windows host:
-#       Press Win+R → type "mstsc" → Connect to: localhost:3389
+#       Press Win+R → type "mstsc" → Connect to: localhost:3392
 #       Or search for "Remote Desktop Connection" in Start menu
 #
 #     macOS host:
 #       Install "Windows App" (formerly Microsoft Remote Desktop) from App Store
-#       Add PC → PC name: localhost:3389
+#       Add PC → PC name: localhost:3392
 #
 #     Linux host:
-#       xfreerdp /v:localhost:3389 /u:ubuntu /p:ubuntu
-#       Or use Remmina → New connection → RDP → Server: localhost:3389
+#       xfreerdp /v:localhost:3392 /u:ubuntu /p:ubuntu
+#       Or use Remmina → New connection → RDP → Server: localhost:3392
 #
 #     Default RDP credentials:
 #       Username: ubuntu
@@ -81,6 +81,7 @@
 #
 #   # Remove container + named volumes (full reset):
 #   docker compose -f docker-compose-xubuntu.yml down -v
+#   rm -rf ./shared
 #
 #   # Rebuild after Dockerfile.xubuntu changes:
 #   docker compose -f docker-compose-xubuntu.yml up -d --build --force-recreate
@@ -217,6 +218,8 @@ services:
       # Bind mount for exchanging files between host and container.
       # Files in ./shared on the host appear at /shared in the container.
       - ./shared:/shared
+      # Files in ./shared on the host appear at /home/ubuntu/shared in the container.
+      - ./shared:/home/ubuntu/shared
 
       # ── Project directory (host ↔ container) ─────────────────────────
       # Bind mount your project folder for development.

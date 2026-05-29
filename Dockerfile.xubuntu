@@ -5,26 +5,26 @@
 # with Dockerfile02 (XFCE desktop + xRDP) into a single Xubuntu container
 # that can be used as a full desktop VM replacement with all dev/CI tooling.
 #
-# Connect via RDP on port 3389 (user: ubuntu / pass: ubuntu)
+# Connect via RDP on port 3392 (user: ubuntu / pass: ubuntu)
 #
 # Build:
 #   docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
 #
 # Run (basic):
-#   docker run -d -p 3389:3389 --device /dev/kvm xubuntu-dev
+#   docker run -d -p 3392:3389 --device /dev/kvm xubuntu-dev
 #
 # Run (with Docker socket for docker CLI access from inside the container):
-#   docker run -d -p 3389:3389 --device /dev/kvm -v /var/run/docker.sock:/var/run/docker.sock xubuntu-dev
+#   docker run -d -p 3392:3389 --device /dev/kvm -v /var/run/docker.sock:/var/run/docker.sock xubuntu-dev
 #
 # Run (with shared folder between host and container):
-#   docker run -d -p 3389:3389 --device /dev/kvm -v /path/on/host:/home/ubuntu/shared xubuntu-dev
+#   docker run -d -p 3392:3389 --device /dev/kvm -v /path/on/host:/home/ubuntu/shared xubuntu-dev
 #
 # Run (multiple shared folders, .ssh read-only):
-#   docker run -d -p 3389:3389 --device /dev/kvm -v C:\Users\you\projects:/home/ubuntu/projects -v C:\Users\you\.ssh:/home/ubuntu/.ssh:ro xubuntu-dev
+#   docker run -d -p 3392:3389 --device /dev/kvm -v C:\Users\you\projects:/home/ubuntu/projects -v C:\Users\you\.ssh:/home/ubuntu/.ssh:ro xubuntu-dev
 #
 # Run (with Docker-managed persistent volume):
 #   docker volume create dev-data
-#   docker run -d -p 3389:3389 --device /dev/kvm -v dev-data:/home/ubuntu/data xubuntu-dev
+#   docker run -d -p 3392:3389 --device /dev/kvm -v dev-data:/home/ubuntu/data xubuntu-dev
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -49,17 +49,23 @@
 #                        to detect the Ubuntu codename for fetching matching
 #                        PulseAudio source packages
 #   git                — Clones the pulseaudio-module-xrdp repository
+#                        Version control. Required for cloning repos in CI
 #   libtool            — GNU Libtool, manages shared library creation across
 #                        platforms. PulseAudio modules are .so shared objects
 #   libltdl-dev        — Libtool's dlopen() abstraction library headers.
 #                        Required by PulseAudio's module loading infrastructure
+#   pulseaudio         — The PulseAudio sound server daemon. Handles audio mixing 
+#                        and routing; xrdp modules redirect its
 #   sudo               — The install_pulseaudio_sources_apt.sh script uses sudo
 #                        internally to install build dependencies
 # -----------------------------------------------------------------------------
 ARG TAG=noble
 FROM ubuntu:$TAG AS builder
 
+# Enable deb-src for Ubuntu 24.04 (Noble) to allow fetching PulseAudio source headers
 RUN apt-get update && \
+    sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-install-recommends \
         autoconf \
         build-essential \
@@ -70,6 +76,7 @@ RUN apt-get update && \
         git \
         libtool \
         libltdl-dev \
+        pulseaudio \
         sudo && \
     rm -rf /var/lib/apt/lists/*
 
@@ -110,6 +117,7 @@ ENV ANDROID_EMULATOR_PACKAGE_ARM="system-images;android-36;google_apis;arm64-v8a
 #
 # Installs a lightweight Xubuntu desktop environment accessible over RDP.
 #
+#   software-properties-common — Provides add-apt-repository for managing PPAs
 #   dbus-x11               — D-Bus session bus launcher for X11. Required by
 #                            XFCE and most GTK apps to communicate over the
 #                            desktop message bus (notifications, settings, etc.)
@@ -122,8 +130,6 @@ ENV ANDROID_EMULATOR_PACKAGE_ARM="system-images;android-36;google_apis;arm64-v8a
 #                            output over the RDP channel
 #   pulseaudio-utils       — CLI tools for PulseAudio (pactl, paplay, parec).
 #                            Useful for scripting audio tests and diagnostics
-#   sudo                   — Allows the non-root 'ubuntu' user to run
-#                            privileged commands inside the container
 #   vim                    — Terminal text editor for quick config edits
 #                            inside the RDP session
 #   x11-xserver-utils      — X11 utilities (xrandr, xdpyinfo, xset). xrandr
@@ -142,6 +148,8 @@ ENV ANDROID_EMULATOR_PACKAGE_ARM="system-images;android-36;google_apis;arm64-v8a
 #                            (Windows Remote Desktop, Remmina, FreeRDP, etc.)
 #   xubuntu-icon-theme     — Xubuntu's icon set (elementary-xfce). Gives the
 #                            desktop a polished look matching stock Xubuntu
+#   sudo                   — Allows the non-root 'ubuntu' user to run
+#                            privileged commands inside the container
 #   firefox                — Web browser, installed from the mozillateam PPA
 #                            to get the native .deb instead of the snap version
 #                            (snaps don't work in Docker)
@@ -154,7 +162,6 @@ RUN apt-get update && \
         pavucontrol \
         pulseaudio \
         pulseaudio-utils \
-        sudo \
         vim \
         x11-xserver-utils \
         xfce4 \
@@ -177,10 +184,6 @@ RUN apt-get update && \
 # 2. SYSTEM DEPENDENCIES, PYTHON, JAVA (from Dockerfile01)
 #
 # CORE TOOLS:
-#   software-properties-common — Provides add-apt-repository for managing PPAs
-#   build-essential        — Meta-package: GCC, G++, make, dpkg-dev, libc-dev.
-#                            Required to compile any C/C++ code or pip packages
-#                            with native extensions
 #   parallel               — GNU Parallel, runs shell commands in parallel.
 #                            Useful for parallelizing test runs across devices
 #   curl                   — CLI HTTP client for downloading files and APIs
@@ -192,8 +195,6 @@ RUN apt-get update && \
 #                            and C++ pip packages (e.g., grpcio, numpy)
 #   apache2-utils          — Provides 'ab' (Apache Bench) for HTTP load testing
 #                            and 'htpasswd' for generating password hashes
-#   git                    — Version control. Required for cloning repos in CI
-#   ca-certificates        — Mozilla CA certificate bundle for HTTPS trust
 #   apt-transport-https    — Allows apt to fetch packages over HTTPS
 #   iputils-ping           — Provides 'ping' for network connectivity checks
 #   net-tools              — Provides 'ifconfig', 'netstat', 'route' for
@@ -314,17 +315,17 @@ RUN apt-get update && \
 #                            virt-clone). Useful if you need to spin up
 #                            additional VMs inside the container
 #   bridge-utils           — Linux bridge management (brctl). Required for
+#   bridge-utils           — Linux bridge management (brctl). Required for 
 #                            setting up bridged networking for VMs
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    software-properties-common build-essential parallel curl htop wget g++ \
-    apache2-utils git ca-certificates apt-transport-https iputils-ping net-tools unzip gnupg \
+    parallel curl htop wget g++ \
+    apache2-utils apt-transport-https iputils-ping net-tools unzip gnupg \
     ffmpeg libsm6 libxext6 libgl1 openssl tk-dev xz-utils llvm make \
     libffi-dev libssl-dev zlib1g-dev libncurses5-dev libncursesw5-dev \
     libreadline-dev libsqlite3-dev libgdbm-dev libdb5.3-dev libbz2-dev \
     libexpat1-dev liblzma-dev libnss3-dev libc6-dev \
     openjdk-${JAVA_VERSION}-jdk-headless \
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv python3-pip python3-full \
     python3-behave python3-launchpadlib \
     libpulse0 libx11-6 libxcomposite1 libxcursor1 libxdamage1 \
     libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 \
@@ -395,7 +396,6 @@ RUN apt-get update && apt-get install -y \
     alsa-base \
     alsa-utils \
     update-manager-core \
-    easyeffects \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -779,7 +779,16 @@ RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
 
 # Copy pulseaudio xrdp modules from builder stage
 COPY --from=builder /tmp/install /
-RUN sed -i 's|^Exec=.*|Exec=/usr/bin/pulseaudio|' /etc/xdg/autostart/pulseaudio-xrdp.desktop
+
+# Ensure machine-id exists for PulseAudio and D-Bus
+RUN dbus-uuidgen > /etc/machine-id && \
+    ln -sf /etc/machine-id /var/lib/dbus/machine-id
+
+# Ensure the modules are in the correct versioned PulseAudio directory and permitted
+RUN PULSE_VERSION=$(ls -d /usr/lib/pulse-* | head -n 1 | cut -d '-' -f 2) && \
+    chmod 755 /usr/lib/pulse-${PULSE_VERSION}/modules/module-xrdp-*.so && \
+    echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa && \
+    echo "load-module module-xrdp-source" >> /etc/pulse/default.pa
 
 # Configure xrdp to listen on port 3390 instead of default 3389
 # RUN sed -i 's|^port=3389$|port=3390|' /etc/xrdp/xrdp.ini

@@ -40,7 +40,7 @@
 #   docker compose -f docker-compose-windows.yml up -d
 #
 #   # Watch installation progress in your browser:
-#   http://localhost:8006
+#   http://localhost:8009
 #
 #   # Wait ~15-30 minutes for automatic installation to complete.
 #   # Once you see the Windows desktop, it's ready.
@@ -48,7 +48,7 @@
 # ─── CONNECTING ──────────────────────────────────────────────────────────────
 #
 #   METHOD 1 — Web browser (noVNC, no client needed):
-#     http://localhost:8006
+#     http://localhost:8009
 #     Best for: initial setup, quick checks, when no RDP client is available.
 #     Limitations: lower image quality, no audio, no clipboard sync.
 #
@@ -57,22 +57,22 @@
 #     with audio, clipboard, and full resolution, use RDP:
 #
 #     Windows host:
-#       Press Win+R → type "mstsc" → Connect to: localhost:3389
+#       Press Win+R → type "mstsc" → Connect to: localhost:3390
 #       Or search for "Remote Desktop Connection" in Start menu
 #
 #     macOS host:
 #       Install "Windows App" (formerly Microsoft Remote Desktop) from App Store
-#       Add PC → PC name: localhost:3389
+#       Add PC → PC name: localhost:3390
 #
 #     Linux host:
-#       xfreerdp /v:localhost:3389 /u:Docker /p:admin
-#       Or use Remmina → New connection → RDP → Server: localhost:3389
+#       xfreerdp /v:localhost:3390 /u:Docker /p:admin
+#       Or use Remmina → New connection → RDP → Server: localhost:3390
 #
 #     Android:
-#       Install "RD Client" from Play Store → Add PC → localhost:3389
+#       Install "RD Client" from Play Store → Add PC → localhost:3390
 #
 #     iOS:
-#       Install "RD Client" from App Store → Add PC → localhost:3389
+#       Install "RD Client" from App Store → Add PC → localhost:3390
 #
 #     Default RDP credentials:
 #       Username: Docker
@@ -210,6 +210,10 @@ services:
     container_name: windows-vm
     environment:
       KVM: "N"  # <--- THIS LINE TO DISABLE THE KVM CHECK
+      # ── Audio Support ────────────────────────────────────────────────
+      # Set to "Y" to enable the experimental browser-based audio player.
+      # For high-quality audio, use RDP instead of the browser.
+      AUDIO: "Y"
       # ── Windows Version ──────────────────────────────────────────────
       # Default: "11" (Windows 11 Pro, 7.2 GB download)
       #

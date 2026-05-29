@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+  
 docker run --detach --rm \
   --user root \
   --name="xubuntu-vm" \
