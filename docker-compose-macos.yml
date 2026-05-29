@@ -265,6 +265,7 @@ services:
       #            All macOS data lives here. Survives stop/start/down/up.
       #            Delete this folder to completely reset the VM.
       - ./macos-data:/storage
+      
       # /shared  — Shared folder. Access from Finder → Go → Computer.
       #            Use to exchange files between host and VM.
       - ./shared:/shared

@@ -212,19 +212,20 @@ services:
       # Named volume that preserves /home/ubuntu across container restarts.
       # Includes Desktop, Documents, Downloads, SSH keys, shell history,
       # browser data, IDE settings, and all user-level configuration.
-      # - xubuntu-home:/home/ubuntu
+      - xubuntu-home:/home/ubuntu
 
       # ── Shared folder (host ↔ container) ─────────────────────────────
       # Bind mount for exchanging files between host and container.
       # Files in ./shared on the host appear at /shared in the container.
       - ./shared:/shared
+
       # Files in ./shared on the host appear at /home/ubuntu/shared in the container.
       - ./shared:/home/ubuntu/shared
 
       # ── Project directory (host ↔ container) ─────────────────────────
       # Bind mount your project folder for development.
       # Uncomment and adjust the host path:
-      # - ./projects:/home/ubuntu/projects
+      - ./projects:/home/ubuntu/projects
 
       # ── Docker socket (for docker CLI inside container) ──────────────
       # Uncomment to enable docker commands inside the container.

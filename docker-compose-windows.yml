@@ -327,9 +327,11 @@ services:
       #            All Windows data lives here. Survives stop/start/down/up.
       #            Delete this folder to completely reset the VM.
       - ./windows-data:/storage
-      # /shared  — Shared folder. Appears as "Shared" on the Windows desktop.
+      
+      # /shared  — Shared folder. Access from Finder → Go → Computer.
       #            Use to exchange files between host and VM.
-      # - ./shared:/shared
+      - ./shared:/shared
+
       # Uncomment for additional disks:
       # - ./disk2:/storage2
       # - ./disk3:/storage3
