@@ -210,10 +210,12 @@ services:
     container_name: windows-vm
     environment:
       KVM: "N"  # <--- THIS LINE TO DISABLE THE KVM CHECK
+      
       # ── Audio Support ────────────────────────────────────────────────
       # Set to "Y" to enable the experimental browser-based audio player.
       # For high-quality audio, use RDP instead of the browser.
       AUDIO: "Y"
+      
       # ── Windows Version ──────────────────────────────────────────────
       # Default: "11" (Windows 11 Pro, 7.2 GB download)
       #
@@ -308,9 +310,9 @@ services:
       # NET_ADMIN — required for the VM to configure its network interface
       - NET_ADMIN
 
-    # Uncomment for DHCP mode:
-    # device_cgroup_rules:
-    #   - 'c *:* rwm'
+     # Uncomment for DHCP mode:
+     # device_cgroup_rules:
+     #  - 'c *:* rwm'
 
     ports:
       # 8009 — Web-based viewer (noVNC). Access via http://localhost:8009

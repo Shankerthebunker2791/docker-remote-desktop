@@ -196,6 +196,7 @@ services:
     container_name: macos-vm
     environment:
       KVM: "N"  # <--- THIS LINE TO DISABLE THE KVM CHECK
+      
       # ── macOS Version ────────────────────────────────────────────────
       # Default: "14" (macOS 14 Sonoma)
       #
@@ -245,14 +246,15 @@ services:
       # NET_ADMIN — required for the VM to configure its network interface
       - NET_ADMIN
 
-    # Uncomment for DHCP mode:
-    # device_cgroup_rules:
-    #   - 'c *:* rwm'
+      # Uncomment for DHCP mode:
+      # device_cgroup_rules:
+      # - 'c *:* rwm'
 
     ports:
       # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
       #         Best for installation and quick checks.
       - 8006:8006
+      
       # 5901 — VNC (Virtual Network Computing). Access via any VNC client.
       #         macOS uses VNC natively (not RDP). On a Mac host, use
       #

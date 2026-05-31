@@ -199,6 +199,7 @@ services:
       # 3392 — RDP (Remote Desktop Protocol). Access via any RDP client.
       #         Username: ubuntu / Password: ubuntu
       - 3392:3389/tcp
+      
       # Uncomment for SSH access (host port 2222 → container port 22):
       # - 2222:22/tcp
 
@@ -217,7 +218,7 @@ services:
       # ── Shared folder (host ↔ container) ─────────────────────────────
       # Bind mount for exchanging files between host and container.
       # Files in ./shared on the host appear at /shared in the container.
-      - ./shared:/shared
+      # - ./shared:/shared
 
       # Files in ./shared on the host appear at /home/ubuntu/shared in the container.
       - ./shared:/home/ubuntu/shared
