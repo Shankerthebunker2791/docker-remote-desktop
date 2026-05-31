@@ -793,9 +793,13 @@ RUN PULSE_VERSION=$(ls -d /usr/lib/pulse-* | head -n 1 | cut -d '-' -f 2) && \
 # Configure xrdp to listen on port 3390 instead of default 3389
 # RUN sed -i 's|^port=3389$|port=3390|' /etc/xrdp/xrdp.ini
 
-# Copy entrypoint (same as Dockerfile02)
+# Copy entrypoint script
 COPY entrypoint.sh /usr/bin/entrypoint
+
+# FORCE EXECUTABLE PERMISSIONS INSIDE THE IMAGE LAYER
+RUN chmod +x /usr/bin/entrypoint
 
 WORKDIR /app
 EXPOSE 3389/tcp
+
 ENTRYPOINT ["/usr/bin/entrypoint"]
