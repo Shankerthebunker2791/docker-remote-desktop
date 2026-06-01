@@ -1,21 +1,70 @@
 #!/usr/bin/env bash
+set -e
 
-# Create the user account
+# 1. Create the user account if it doesn't exist (Preserving your exact UID/GID settings)
 if ! id ubuntu >/dev/null 2>&1; then
     groupadd --gid 1020 ubuntu
-    useradd --shell /bin/bash --uid 1020 --gid 1020 --groups sudo --password "$(openssl passwd ubuntu)" --create-home --home-dir /home/ubuntu ubuntu
+    useradd --shell /bin/bash --uid 1020 --gid 1020 --groups sudo,audio \
+        --password "$(openssl passwd ubuntu)" --create-home --home-dir /home/ubuntu ubuntu
+else
+    # Ensure existing ubuntu user belongs to required runtime groups
+    usermod -aG sudo,audio ubuntu
 fi
 
-# Remove existing sesman/xrdp PID files to prevent rdp sessions hanging on container restart
-[ ! -f /var/run/xrdp/xrdp-sesman.pid ] || rm -f /var/run/xrdp/xrdp-sesman.pid
-[ ! -f /var/run/xrdp/xrdp.pid ] || rm -f /var/run/xrdp/xrdp.pid
+# 2. Configure passwordless sudo access cleanly
+mkdir -p /etc/sudoers.d
+echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu
+chmod 440 /etc/sudoers.d/ubuntu
 
-# Start xrdp sesman service
+# 3. Ensure home directory ownership is intact
+mkdir -p /home/ubuntu
+chown -R ubuntu:ubuntu /home/ubuntu
+
+# 4. FIX THE AUDIO HANG & BLANK SCREEN: Standardize X11 session & D-Bus environmental plumbing
+cat << 'EOF' > /home/ubuntu/.xsession
+#!/usr/bin/env bash
+# Dynamically spawn a local D-Bus session bus instance so PulseAudio can register a socket loop
+export $(dbus-launch)
+pulseaudio --start --exit-idle-time=-1 &
+exec xfce4-session
+EOF
+
+chown ubuntu:ubuntu /home/ubuntu/.xsession
+chmod 755 /home/ubuntu/.xsession
+
+# 5. Clear stale service runtime locking PIDs to prevent hanging states
+rm -f /var/run/xrdp/xrdp-sesman.pid
+rm -f /var/run/xrdp/xrdp.pid
+rm -f /var/run/dbus/pid
+rm -f /tmp/.X*-lock
+
+# FIX IMAGE 1 display handshake: Ensure standard directory permissions for X11 server sockets
+chmod 1777 /tmp
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+rm -rf /tmp/.X11-unix/X*
+
+# 6. Initialize system-wide D-Bus (Required for XFCE window and sound state)
+mkdir -p /var/run/dbus
+# FIX IMAGE 2 machine-id requirement: Generate absolute system hardware identifier mappings
+dbus-uuidgen --ensure
+
+if [ ! -f /var/run/dbus/pid ]; then
+    dbus-daemon --system --fork
+fi
+
+# Start the PulseAudio daemon natively for the ubuntu user
+# This creates the necessary ~/.config/pulse directories at runtime
+echo "Starting PulseAudio daemon globally..."
+su - ubuntu -c "pulseaudio --start"
+
+# 7. Fire up the XRDP session manager daemon
 /usr/sbin/xrdp-sesman
 
-# Run xrdp in foreground if no commands specified
+# 8. Start XRDP in foreground or handoff execution to arguments
 if [ -z "$1" ]; then
-    /usr/sbin/xrdp --nodaemon
+    echo "Starting XRDP Server in foreground on port 3389..."
+    exec /usr/sbin/xrdp --nodaemon
 else
     /usr/sbin/xrdp
     exec "$@"

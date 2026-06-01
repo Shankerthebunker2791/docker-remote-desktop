@@ -202,7 +202,7 @@ services:
       #
       #   "15" = macOS 15 Sequoia (Apple ID sign-in not yet working)
       #   "14" = macOS 14 Sonoma  (default, stable) # Very heavy; optimized for Apple Silicon, not Intel emulation.
-      #   "13" = macOS 13 Ventura.  # Introduced a massive overhaul of System Settings and more "Stage Manager" overhead.
+      #   "13" = macOS 13 Ventura  # Introduced a massive overhaul of System Settings and more "Stage Manager" overhead.
       #   "12" = macOS 12 Monterey  # Stable, but introduces more background sync services.
       #   "11" = macOS 11 Big Sur   # Smallest OS footprint; fewer modern "security" checks slowing down the kernel.
       VERSION: "11"

@@ -95,7 +95,7 @@ FROM ubuntu:$TAG
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# --- Version pins (from Dockerfile01) ---
+# --- Version pins ---
 ENV PYTHON_VERSION=3.12
 ENV NODE_MAJOR=20
 ENV JAVA_VERSION=21
@@ -780,18 +780,16 @@ RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
 # Copy pulseaudio xrdp modules from builder stage
 COPY --from=builder /tmp/install /
 
-# Ensure machine-id exists for PulseAudio and D-Bus
-RUN dbus-uuidgen > /etc/machine-id && \
-    ln -sf /etc/machine-id /var/lib/dbus/machine-id
+# Initialize the D-Bus machine ID safely (using the --ensure flag that bypasses Pipewire conflicts)
+RUN mkdir -p /var/lib/dbus && \
+    dbus-uuidgen --ensure && \
+    ln -sf /var/lib/dbus/machine-id /etc/machine-id || true
 
 # Ensure the modules are in the correct versioned PulseAudio directory and permitted
 RUN PULSE_VERSION=$(ls -d /usr/lib/pulse-* | head -n 1 | cut -d '-' -f 2) && \
     chmod 755 /usr/lib/pulse-${PULSE_VERSION}/modules/module-xrdp-*.so && \
     echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa && \
     echo "load-module module-xrdp-source" >> /etc/pulse/default.pa
-
-# Configure xrdp to listen on port 3390 instead of default 3389
-# RUN sed -i 's|^port=3389$|port=3390|' /etc/xrdp/xrdp.ini
 
 # Copy entrypoint script
 COPY entrypoint.sh /usr/bin/entrypoint

@@ -86,6 +86,9 @@
 #   # Rebuild after Dockerfile.xubuntu changes:
 #   docker compose -f docker-compose-xubuntu.yml up -d --build --force-recreate
 #
+#     or,
+#
+#   docker compose -f docker-compose-xubuntu.yml build --no-cache && docker compose -f docker-compose-xubuntu.yml up --force-recreate
 #   docker logs -f xubuntu-vm
 #
 # ─── DATA PERSISTENCE ────────────────────────────────────────────────────────
