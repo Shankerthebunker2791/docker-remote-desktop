@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
+# Define the password dynamically
+DESKTOP_PASS=${RDP_PASSWORD:-ubuntu}
+
 # 1. Create the user account if it doesn't exist (Preserving your exact UID/GID settings)
 if ! id ubuntu >/dev/null 2>&1; then
     groupadd --gid 1020 ubuntu
     useradd --shell /bin/bash --uid 1020 --gid 1020 --groups sudo,audio \
-        --password "$(openssl passwd ubuntu)" --create-home --home-dir /home/ubuntu ubuntu
+        --password "$(openssl passwd ${DESKTOP_PASS})" --create-home --home-dir /home/ubuntu ubuntu
 else
-    # Ensure existing ubuntu user belongs to required runtime groups
+    # Update password for existing user on boot just in case it was changed in compose
+    echo "ubuntu:${DESKTOP_PASS}" | chpasswd
     usermod -aG sudo,audio ubuntu
 fi
 

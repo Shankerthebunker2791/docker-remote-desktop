@@ -186,8 +186,8 @@ services:
       #   TAG: noble
     image: xubuntu-dev:latest
     container_name: xubuntu-vm
-    user: root
     hostname: xubuntu-vm
+    user: root
     shm_size: "2g"     # Shared memory size (required for some apps, e.g. Chrome)
 
     # devices:
