@@ -310,9 +310,9 @@ services:
       # NET_ADMIN — required for the VM to configure its network interface
       - NET_ADMIN
 
-     # Uncomment for DHCP mode:
-     # device_cgroup_rules:
-     #  - 'c *:* rwm'
+      # Uncomment for DHCP mode:
+      # device_cgroup_rules:
+      # - 'c *:* rwm'
 
     ports:
       # 8009 — Web-based viewer (noVNC). Access via http://localhost:8009

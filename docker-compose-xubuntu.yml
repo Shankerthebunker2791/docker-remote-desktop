@@ -233,7 +233,11 @@ services:
 
       # ── Docker socket (for docker CLI inside container) ──────────────
       # Uncomment to enable docker commands inside the container.
-      # SECURITY: Gives container full control over host Docker daemon.
+      # SECURITY: Mounting docker.sock grants the container root-equivalent
+      #           control over the host Docker daemon. Leave this disabled
+      #           unless you are in a trusted environment and need DooD.
+      # NOTE: This path only exists on Linux/macOS hosts. On Windows, Docker
+      #       Desktop exposes the daemon via a named pipe, not this socket.
       - /var/run/docker.sock:/var/run/docker.sock
 
     # Restart policy — keeps the container running after host reboot
