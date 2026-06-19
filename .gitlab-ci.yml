@@ -1,140 +1,225 @@
 # =============================================================================
-# GitLab CI — Build, Test, and Deploy
+# GitLab CI — Clean, Build & Spin Up VMs on Self-Hosted Runner
 #
-# Pipeline: Build → Test (JUnit report) → Deploy to Docker Hub → Cleanup
-# Triggers on push to master/main.
+# Works on any self-hosted runner: Linux, macOS, or Windows.
+#
+# On every push to any branch (or manual trigger):
+#   1. Cleans ALL Docker state on the runner (full purge)
+#   2. Builds the Xubuntu image from scratch
+#   3. Spins up all three VMs (xubuntu, windows, macos) via docker compose
+#   4. Runs validation tests and generates a JUnit report
+#
+# The VMs stay running on the remote machine until the next push triggers
+# a fresh clean + redeploy.
 #
 # Required CI/CD Variables (Settings → CI/CD → Variables):
 #   DOCKERHUB_USERNAME   — Docker Hub username (masked)
 #   DOCKERHUB_TOKEN      — Docker Hub access token (masked)
+#   RUNNER_TAG           — Tag of your self-hosted runner (e.g., "docker",
+#                          "linux", "macos", "windows"). Must match the tag
+#                          your runner is registered with.
 #
-# Optional CI/CD Variables:
-#   RUNNER_TAG           — Your GitLab runner tag (default: "docker")
-#                          Set this to match your registered runner's tag.
+# Runner requirements:
+#   - Any OS (Linux, macOS, Windows) with Docker + Docker Compose installed
+#   - GitLab Runner registered with SHELL executor (not docker executor!)
+#     because we need VMs to persist on the host after the pipeline finishes
+#   - Runner tag must match RUNNER_TAG variable
+#
+# Register runner (example):
+#   gitlab-runner register \
+#     --executor shell \
+#     --tag-list "docker,self-hosted" \
+#     --url https://gitlab.com \
+#     --token YOUR_TOKEN
 # =============================================================================
 
 variables:
   IMAGE_NAME: "xubuntu-dev"
-  DOCKER_REPO: "docker-remote-desktop"
+  COMPOSE_DOCKER_CLI_BUILD: "1"
   DOCKER_BUILDKIT: "1"
-  DOCKER_TLS_CERTDIR: "/certs"
 
 stages:
+  - clean
   - build
-  - test
   - deploy
-  - cleanup
+  - test
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
+# Shell executor — runs directly on the host OS. Docker commands control
+# the host's Docker daemon, so VMs persist after the job finishes.
 default:
-  image: docker:27
-  services:
-    - docker:27-dind
   tags:
     - $RUNNER_TAG
-  before_script:
-    - docker info
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 1: BUILD
+# STAGE 1: CLEAN
 # ═══════════════════════════════════════════════════════════════════════════════
-build:
-  stage: build
+clean:
+  stage: clean
   script:
+    - echo "═══ Stopping existing VMs... ═══"
+    - docker compose -f docker-compose-xubuntu.yml down -v 2>/dev/null || true
+    - docker compose -f docker-compose-windows.yml down 2>/dev/null || true
+    - docker compose -f docker-compose-macos.yml down 2>/dev/null || true
+    - docker rm -f xubuntu-vm xubuntu-vm-interactive windows-vm macos-vm 2>/dev/null || true
+
+    - echo "═══ Purging all Docker state... ═══"
     - docker system prune -af --volumes
     - docker builder prune -af
-    - docker build --no-cache -f Dockerfile.xubuntu -t ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} .
-    - docker tag ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} ${IMAGE_NAME}:latest
-    - docker save ${IMAGE_NAME}:latest | gzip > image.tar.gz
-    - echo "✓ Built ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
-  artifacts:
-    paths:
-      - image.tar.gz
-    expire_in: 1 hour
+
+    - echo "═══ Removing old data directories... ═══"
+    - rm -rf shared projects windows-data windows-shared macos-data macos-shared 2>/dev/null || true
+
+    - echo "✓ Runner fully cleaned"
   rules:
-    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH
     - when: manual
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 2: TEST
+# STAGE 2: BUILD
+# ═══════════════════════════════════════════════════════════════════════════════
+build:
+  stage: build
+  needs: ["clean"]
+  script:
+    - echo "═══ Building Xubuntu image... ═══"
+    - docker build --no-cache -f Dockerfile.xubuntu -t ${IMAGE_NAME}:latest .
+    - echo "✓ Built ${IMAGE_NAME}:latest"
+
+    - echo "═══ Pulling Windows and macOS images... ═══"
+    - docker pull dockurr/windows
+    - docker pull dockurr/macos
+    - echo "✓ All images ready"
+
+    - echo "═══ Cleaning build cache... ═══"
+    - docker builder prune -af
+    - docker image prune -f
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - when: manual
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 3: DEPLOY (Spin Up VMs)
+# ═══════════════════════════════════════════════════════════════════════════════
+deploy:
+  stage: deploy
+  needs: ["build"]
+  script:
+    - echo "═══ Creating shared directories... ═══"
+    - mkdir -p shared projects windows-shared macos-shared
+
+    - echo "═══ Starting Xubuntu... ═══"
+    - docker compose -f docker-compose-xubuntu.yml up -d
+    - echo "✓ Xubuntu → RDP localhost:3392 (ubuntu/ubuntu)"
+
+    - echo "═══ Starting Windows... ═══"
+    - docker compose -f docker-compose-windows.yml up -d
+    - echo "✓ Windows → RDP localhost:3390 (Docker/admin) | Web http://localhost:8009"
+
+    - echo "═══ Starting macOS... ═══"
+    - docker compose -f docker-compose-macos.yml up -d
+    - echo "✓ macOS → VNC localhost:5901 | Web http://localhost:8006"
+
+    - echo "═══ Waiting for services to initialize... ═══"
+    - sleep 20
+
+    - echo "═══ Running containers: ═══"
+    - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - when: manual
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 4: TEST
 # ═══════════════════════════════════════════════════════════════════════════════
 test:
   stage: test
-  needs: ["build"]
+  needs: ["deploy"]
   script:
-    - docker load < image.tar.gz
-    - docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:test
-
-    - docker run -d --name test-vm ${IMAGE_NAME}:test
-    - sleep 15
-
     - mkdir -p test-results
     - |
-      TESTS=0; FAILURES=0; START=$(date +%s)
       REPORT="test-results/junit-report.xml"
+      TESTS=0; FAILURES=0; START=$(date +%s)
 
       echo '<?xml version="1.0" encoding="UTF-8"?>' > "$REPORT"
       echo '<testsuites>' >> "$REPORT"
-      echo '  <testsuite name="ImageValidation">' >> "$REPORT"
+      echo '  <testsuite name="VMValidation">' >> "$REPORT"
 
       run_test() {
         local name="$1"; shift
         TESTS=$((TESTS + 1))
-        if "$@" > /dev/null 2>&1; then
-          echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"/>" >> "$REPORT"
+        if eval "$@" > /dev/null 2>&1; then
+          echo "    <testcase classname=\"VMValidation\" name=\"${name}\"/>" >> "$REPORT"
           echo "✓ ${name}"
         else
           FAILURES=$((FAILURES + 1))
-          echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"><failure message=\"FAILED\"/></testcase>" >> "$REPORT"
+          echo "    <testcase classname=\"VMValidation\" name=\"${name}\"><failure message=\"FAILED\"/></testcase>" >> "$REPORT"
           echo "✗ ${name}"
         fi
       }
 
-      run_test "Container is running" \
-        docker ps --filter name=test-vm --filter status=running --format '{{.Names}}' | grep -qx test-vm
+      # ── Xubuntu Tests ──
+      run_test "Xubuntu container running" \
+        "docker ps --filter name=xubuntu-vm --filter status=running --format '{{.Names}}' | grep -qx xubuntu-vm"
 
       run_test "xrdp listening on 3389" \
-        docker exec test-vm bash -c "ss -tlnp | grep -q :3389"
+        "docker exec xubuntu-vm bash -c 'ss -tlnp | grep -q :3389'"
 
       run_test "Python 3.12 installed" \
-        docker exec test-vm bash -c "python3 --version | grep -q '3.12'"
+        "docker exec xubuntu-vm bash -c 'python3 --version | grep -q 3.12'"
 
       run_test "Java 21 installed" \
-        docker exec test-vm bash -c "java -version 2>&1 | grep -q '21'"
+        "docker exec xubuntu-vm bash -c 'java -version 2>&1 | grep -q 21'"
 
       run_test "Node.js 20 installed" \
-        docker exec test-vm bash -c "node --version | grep -q 'v20'"
+        "docker exec xubuntu-vm bash -c 'node --version | grep -q v20'"
 
-      run_test "Docker CLI installed" \
-        docker exec test-vm bash -c "docker --version | grep -q 'Docker version'"
+      run_test "Docker CLI inside Xubuntu" \
+        "docker exec xubuntu-vm bash -c 'docker --version | grep -q Docker'"
 
       run_test "Gradle installed" \
-        docker exec test-vm bash -c "gradle --version 2>&1 | grep -q 'Gradle'"
+        "docker exec xubuntu-vm bash -c 'gradle --version 2>&1 | grep -q Gradle'"
 
       run_test "Maven installed" \
-        docker exec test-vm bash -c "mvn --version 2>&1 | grep -q 'Maven'"
+        "docker exec xubuntu-vm bash -c 'mvn --version 2>&1 | grep -q Maven'"
 
       run_test "Ant installed" \
-        docker exec test-vm bash -c "ant -version 2>&1 | grep -q 'Ant'"
+        "docker exec xubuntu-vm bash -c 'ant -version 2>&1 | grep -q Ant'"
 
       run_test "Ubuntu user exists" \
-        docker exec test-vm id ubuntu
+        "docker exec xubuntu-vm id ubuntu"
 
       run_test "SSH keys regenerated" \
-        docker exec test-vm test -f /etc/ssh/.keys_regenerated
+        "docker exec xubuntu-vm test -f /etc/ssh/.keys_regenerated"
 
       run_test "adb available" \
-        docker exec test-vm bash -c "which adb"
+        "docker exec xubuntu-vm which adb"
 
+      # ── Windows Tests ──
+      run_test "Windows container running" \
+        "docker ps --filter name=windows-vm --filter status=running --format '{{.Names}}' | grep -qx windows-vm"
+
+      # ── macOS Tests ──
+      run_test "macOS container running" \
+        "docker ps --filter name=macos-vm --filter status=running --format '{{.Names}}' | grep -qx macos-vm"
+
+      # Close XML
       DURATION=$(($(date +%s) - START))
       echo "  </testsuite>" >> "$REPORT"
       echo "</testsuites>" >> "$REPORT"
-      sed -i "s/<testsuite name=\"ImageValidation\">/<testsuite name=\"ImageValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
 
-      docker rm -f test-vm || true
+      # Handle both GNU sed (Linux/Windows Git Bash) and BSD sed (macOS)
+      if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "s/<testsuite name=\"VMValidation\">/<testsuite name=\"VMValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
+      else
+        sed -i '' "s/<testsuite name=\"VMValidation\">/<testsuite name=\"VMValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
+      fi
 
       echo ""
       echo "═══ ${TESTS} tests, ${FAILURES} failures, ${DURATION}s ═══"
+      echo ""
+      docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
       [ "$FAILURES" -eq 0 ] || exit 1
 
   artifacts:
@@ -145,41 +230,5 @@ test:
       junit: test-results/junit-report.xml
     expire_in: 90 days
   rules:
-    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
-    - when: manual
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 3: DEPLOY
-# ═══════════════════════════════════════════════════════════════════════════════
-deploy:
-  stage: deploy
-  needs: ["test"]
-  script:
-    - echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
-    - docker load < image.tar.gz
-    - DATESTAMP=$(date +'%Y%m%d')
-    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest
-    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${DATESTAMP}
-    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${CI_COMMIT_SHORT_SHA}
-    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest
-    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${DATESTAMP}
-    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${CI_COMMIT_SHORT_SHA}
-    - echo "✓ Pushed ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest"
-  after_script:
-    - docker logout || true
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
-    - when: manual
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 4: CLEANUP
-# ═══════════════════════════════════════════════════════════════════════════════
-cleanup:
-  stage: cleanup
-  script:
-    - docker system prune -af --volumes
-    - echo "✓ Runner cleaned"
-  when: always
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH
     - when: manual

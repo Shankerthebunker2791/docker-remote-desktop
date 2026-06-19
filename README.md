@@ -329,37 +329,65 @@ ISOs are excluded from git via `.gitignore` (`*.iso`).
 
 ## CI/CD Pipeline
 
-Both GitHub Actions and GitLab CI configurations are included. They run the same pipeline:
+Both GitHub Actions and GitLab CI configurations are included. They run the same pipeline on **any branch push**:
 
-**Build → Test → Deploy**
+**Clean → Build → Deploy → Test**
 
 | Stage | What it does |
 |-------|-------------|
-| Build | Cleans runner, builds image from `Dockerfile.xubuntu`, saves as artifact |
-| Test | Loads image, starts container, runs 12 validation tests, generates JUnit XML |
-| Deploy | Tags and pushes multi-arch image to Docker Hub (`latest`, datestamp, commit SHA) |
+| Clean | Stops all running VMs, purges Docker (images, volumes, cache), removes data dirs |
+| Build | Builds Xubuntu from `Dockerfile.xubuntu`, pulls `dockurr/windows` + `dockurr/macos` |
+| Deploy | `docker compose up -d` for all three VMs — they stay running on the machine |
+| Test | 14 validation tests, generates JUnit XML report |
+
+VMs remain running until the next push triggers a fresh clean + redeploy.
+
+### Platform Compatibility
+
+The pipeline and compose files work on **any OS** with Docker installed:
+
+| Runner OS | Xubuntu | Windows VM | macOS VM | Notes |
+|-----------|---------|-----------|----------|-------|
+| **Linux** | ✅ | ✅ Best (KVM) | ✅ Best (KVM) | Enable KVM for acceptable QEMU performance |
+| **macOS** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU falls back to TCG emulation |
+| **Windows** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU falls back to TCG emulation |
+
+**Key points:**
+- All compose files set `KVM: "N"` so VMs start on any host without error
+- On Linux with KVM available, uncomment `devices: [/dev/kvm]` in the compose files for 10-50x faster Windows/macOS VMs
+- Xubuntu is a native container — runs at full speed on all platforms
+- Docker socket mount (`/var/run/docker.sock`) works on Linux and macOS. On Windows with Docker Desktop, Docker Compose handles the translation automatically
+- The macOS VM requires Apple hardware per Apple's EULA (only enforced legally, not technically)
 
 ### GitHub Actions (`.github/workflows/deploy.yml`)
 
 **Setup:**
-1. Add secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Settings → Secrets → Actions)
-2. Optionally set `RUNNER_LABEL` variable to your self-hosted runner label (defaults to `ubuntu-latest`)
+1. Install a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) on your remote machine
+2. Set repository variable `RUNNER_LABEL` = your runner's label (Settings → Variables → Actions)
+3. Add secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
+4. Push to any branch
 
-**Test results:** Visible in the **Checks** tab on commits and PRs. JUnit report artifact retained 90 days.
+**Test results:** Visible in the **Checks** tab. JUnit artifact retained 90 days.
 
 ### GitLab CI (`.gitlab-ci.yml`)
 
 **Setup:**
-1. Add CI/CD variables: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Settings → CI/CD → Variables, masked)
-2. Optionally set `RUNNER_TAG` variable to your runner's tag (defaults to `docker`)
+1. Register a [GitLab Runner](https://docs.gitlab.com/runner/install/) with **shell executor** on your remote machine:
+   ```bash
+   gitlab-runner register --executor shell --tag-list "docker" --url https://gitlab.com --token YOUR_TOKEN
+   ```
+2. Set CI/CD variables: `RUNNER_TAG` (your runner tag), `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
+3. Push to any branch
 
-**Test results:** Visible in the **Tests** tab on pipeline pages and in merge request widgets. JUnit artifact retained 90 days.
+**Why shell executor?** Docker executor runs jobs inside throwaway containers — VMs would die when the job ends. Shell executor runs directly on the host so VMs persist after the pipeline finishes.
+
+**Test results:** Visible in the **Tests** tab on pipeline pages and merge request widgets. JUnit artifact retained 90 days.
 
 ### Tests Executed
 
 | # | Test |
 |---|------|
-| 1 | Container starts and stays running |
+| 1 | Xubuntu container running |
 | 2 | xrdp listening on port 3389 |
 | 3 | Python 3.12 installed |
 | 4 | Java 21 installed |
@@ -371,6 +399,8 @@ Both GitHub Actions and GitLab CI configurations are included. They run the same
 | 10 | Ubuntu user exists |
 | 11 | SSH host keys regenerated |
 | 12 | adb (Android) available |
+| 13 | Windows container running |
+| 14 | macOS container running |
 
 ---
 
