@@ -310,9 +310,9 @@ services:
       # NET_ADMIN — required for the VM to configure its network interface
       - NET_ADMIN
 
-      # Uncomment for DHCP mode:
-      # device_cgroup_rules:
-      # - 'c *:* rwm'
+    # Uncomment for DHCP mode (top-level key, not nested under cap_add):
+    # device_cgroup_rules:
+    #   - 'c *:* rwm'
 
     ports:
       # 8009 — Web-based viewer (noVNC). Access via http://localhost:8009
@@ -330,17 +330,25 @@ services:
       #            Delete this folder to completely reset the VM.
       - ./windows-data:/storage
       
-      # /shared  — Shared folder. Access from Finder → Go → Computer.
+      # /shared  — Shared folder. Access from Windows desktop "Shared" folder.
       #            Use to exchange files between host and VM.
-      - ./shared:/shared
+      - ./windows-shared:/shared
 
       # Uncomment for additional disks:
       # - ./disk2:/storage2
       # - ./disk3:/storage3
-      # Uncomment for post-install script:
+
+      # Uncomment for post-install script (runs install.bat after Windows setup):
       # - ./oem:/oem
-      # Uncomment for local ISO:
-      # - ./my-windows.iso:/boot.iso
+
+      # ── CUSTOM ISO OPTIONS ──────────────────────────────────────────
+      # To use your own ISO instead of auto-downloading, simply drop a
+      # file named "windows.iso" into this project folder and uncomment:
+      # - ./windows.iso:/boot.iso
+      #
+      # When /boot.iso is mounted, the VERSION env var is ignored.
+      # You can also use a URL instead (set in environment above):
+      #   VERSION: "https://example.com/path/to/custom-windows.iso"
 
     # Restart policy — keeps the VM running after host reboot
     restart: unless-stopped

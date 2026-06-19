@@ -1,0 +1,185 @@
+# =============================================================================
+# GitLab CI — Build, Test, and Deploy
+#
+# Pipeline: Build → Test (JUnit report) → Deploy to Docker Hub → Cleanup
+# Triggers on push to master/main.
+#
+# Required CI/CD Variables (Settings → CI/CD → Variables):
+#   DOCKERHUB_USERNAME   — Docker Hub username (masked)
+#   DOCKERHUB_TOKEN      — Docker Hub access token (masked)
+#
+# Optional CI/CD Variables:
+#   RUNNER_TAG           — Your GitLab runner tag (default: "docker")
+#                          Set this to match your registered runner's tag.
+# =============================================================================
+
+variables:
+  IMAGE_NAME: "xubuntu-dev"
+  DOCKER_REPO: "docker-remote-desktop"
+  DOCKER_BUILDKIT: "1"
+  DOCKER_TLS_CERTDIR: "/certs"
+
+stages:
+  - build
+  - test
+  - deploy
+  - cleanup
+
+# ─── Defaults ────────────────────────────────────────────────────────────────
+default:
+  image: docker:27
+  services:
+    - docker:27-dind
+  tags:
+    - $RUNNER_TAG
+  before_script:
+    - docker info
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 1: BUILD
+# ═══════════════════════════════════════════════════════════════════════════════
+build:
+  stage: build
+  script:
+    - docker system prune -af --volumes
+    - docker builder prune -af
+    - docker build --no-cache -f Dockerfile.xubuntu -t ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} .
+    - docker tag ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} ${IMAGE_NAME}:latest
+    - docker save ${IMAGE_NAME}:latest | gzip > image.tar.gz
+    - echo "✓ Built ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+  artifacts:
+    paths:
+      - image.tar.gz
+    expire_in: 1 hour
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - when: manual
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 2: TEST
+# ═══════════════════════════════════════════════════════════════════════════════
+test:
+  stage: test
+  needs: ["build"]
+  script:
+    - docker load < image.tar.gz
+    - docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:test
+
+    - docker run -d --name test-vm ${IMAGE_NAME}:test
+    - sleep 15
+
+    - mkdir -p test-results
+    - |
+      TESTS=0; FAILURES=0; START=$(date +%s)
+      REPORT="test-results/junit-report.xml"
+
+      echo '<?xml version="1.0" encoding="UTF-8"?>' > "$REPORT"
+      echo '<testsuites>' >> "$REPORT"
+      echo '  <testsuite name="ImageValidation">' >> "$REPORT"
+
+      run_test() {
+        local name="$1"; shift
+        TESTS=$((TESTS + 1))
+        if "$@" > /dev/null 2>&1; then
+          echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"/>" >> "$REPORT"
+          echo "✓ ${name}"
+        else
+          FAILURES=$((FAILURES + 1))
+          echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"><failure message=\"FAILED\"/></testcase>" >> "$REPORT"
+          echo "✗ ${name}"
+        fi
+      }
+
+      run_test "Container is running" \
+        docker ps --filter name=test-vm --filter status=running --format '{{.Names}}' | grep -qx test-vm
+
+      run_test "xrdp listening on 3389" \
+        docker exec test-vm bash -c "ss -tlnp | grep -q :3389"
+
+      run_test "Python 3.12 installed" \
+        docker exec test-vm bash -c "python3 --version | grep -q '3.12'"
+
+      run_test "Java 21 installed" \
+        docker exec test-vm bash -c "java -version 2>&1 | grep -q '21'"
+
+      run_test "Node.js 20 installed" \
+        docker exec test-vm bash -c "node --version | grep -q 'v20'"
+
+      run_test "Docker CLI installed" \
+        docker exec test-vm bash -c "docker --version | grep -q 'Docker version'"
+
+      run_test "Gradle installed" \
+        docker exec test-vm bash -c "gradle --version 2>&1 | grep -q 'Gradle'"
+
+      run_test "Maven installed" \
+        docker exec test-vm bash -c "mvn --version 2>&1 | grep -q 'Maven'"
+
+      run_test "Ant installed" \
+        docker exec test-vm bash -c "ant -version 2>&1 | grep -q 'Ant'"
+
+      run_test "Ubuntu user exists" \
+        docker exec test-vm id ubuntu
+
+      run_test "SSH keys regenerated" \
+        docker exec test-vm test -f /etc/ssh/.keys_regenerated
+
+      run_test "adb available" \
+        docker exec test-vm bash -c "which adb"
+
+      DURATION=$(($(date +%s) - START))
+      echo "  </testsuite>" >> "$REPORT"
+      echo "</testsuites>" >> "$REPORT"
+      sed -i "s/<testsuite name=\"ImageValidation\">/<testsuite name=\"ImageValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
+
+      docker rm -f test-vm || true
+
+      echo ""
+      echo "═══ ${TESTS} tests, ${FAILURES} failures, ${DURATION}s ═══"
+      [ "$FAILURES" -eq 0 ] || exit 1
+
+  artifacts:
+    when: always
+    paths:
+      - test-results/junit-report.xml
+    reports:
+      junit: test-results/junit-report.xml
+    expire_in: 90 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - when: manual
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 3: DEPLOY
+# ═══════════════════════════════════════════════════════════════════════════════
+deploy:
+  stage: deploy
+  needs: ["test"]
+  script:
+    - echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+    - docker load < image.tar.gz
+    - DATESTAMP=$(date +'%Y%m%d')
+    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest
+    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${DATESTAMP}
+    - docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest
+    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${DATESTAMP}
+    - docker push ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:${CI_COMMIT_SHORT_SHA}
+    - echo "✓ Pushed ${DOCKERHUB_USERNAME}/${DOCKER_REPO}:latest"
+  after_script:
+    - docker logout || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - when: manual
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 4: CLEANUP
+# ═══════════════════════════════════════════════════════════════════════════════
+cleanup:
+  stage: cleanup
+  script:
+    - docker system prune -af --volumes
+    - echo "✓ Runner cleaned"
+  when: always
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - when: manual

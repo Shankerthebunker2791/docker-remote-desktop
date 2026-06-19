@@ -246,9 +246,9 @@ services:
       # NET_ADMIN — required for the VM to configure its network interface
       - NET_ADMIN
 
-      # Uncomment for DHCP mode:
-      # device_cgroup_rules:
-      # - 'c *:* rwm'
+    # Uncomment for DHCP mode (top-level key, not nested under cap_add):
+    # device_cgroup_rules:
+    #   - 'c *:* rwm'
 
     ports:
       # 8006 — Web-based viewer (noVNC). Access via http://localhost:8006
@@ -270,7 +270,15 @@ services:
       
       # /shared  — Shared folder. Access from Finder → Go → Computer.
       #            Use to exchange files between host and VM.
-      - ./shared:/shared
+      - ./macos-shared:/shared
+
+      # ── CUSTOM ISO OPTIONS ──────────────────────────────────────────
+      # To use your own ISO instead of auto-downloading the recovery image,
+      # simply drop a file named "macos.iso" into this project folder and
+      # uncomment:
+      # - ./macos.iso:/boot.iso
+      #
+      # When /boot.iso is mounted, the VERSION env var is ignored.
 
     # Restart policy — keeps the VM running after host reboot
     restart: unless-stopped

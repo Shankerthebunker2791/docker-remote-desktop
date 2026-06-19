@@ -1,11 +1,61 @@
 #!/usr/bin/env bash
-  
-docker run --detach --rm \
-  --user root \
-  --name="xubuntu-vm" \
-  --hostname="$(hostname)" \
-  --publish="3392:3389/tcp" \
-  --shm-size="2g" \
-  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-  --mount type=bind,source=/Users/dishin/shared,target=/shared \
-  xubuntu-dev:latest /bin/bash
+set -euo pipefail
+
+# =============================================================================
+# start — Start VM containers as detached daemons
+#
+# Usage:
+#   ./start              Start all VMs
+#   ./start xubuntu      Start only Xubuntu
+#   ./start windows      Start only Windows
+#   ./start macos        Start only macOS
+#
+# After starting, connect via:
+#   Xubuntu:  RDP → localhost:3392  (ubuntu/ubuntu)
+#   Windows:  RDP → localhost:3390  (Docker/admin) or http://localhost:8009
+#   macOS:    VNC → localhost:5901  or http://localhost:8006
+# =============================================================================
+
+start_xubuntu() {
+    echo "═══ Starting Xubuntu... ═══"
+    docker compose -f docker-compose-xubuntu.yml up -d --build
+    echo "✓ Xubuntu running → RDP localhost:3392 (ubuntu/ubuntu)"
+}
+
+start_windows() {
+    echo "═══ Starting Windows... ═══"
+    docker compose -f docker-compose-windows.yml up -d
+    echo "✓ Windows running → RDP localhost:3390 (Docker/admin) | Web http://localhost:8009"
+}
+
+start_macos() {
+    echo "═══ Starting macOS... ═══"
+    docker compose -f docker-compose-macos.yml up -d
+    echo "✓ macOS running → VNC localhost:5901 | Web http://localhost:8006"
+}
+
+TARGET="${1:-all}"
+
+case "${TARGET}" in
+    xubuntu)
+        start_xubuntu
+        ;;
+    windows)
+        start_windows
+        ;;
+    macos)
+        start_macos
+        ;;
+    all)
+        start_xubuntu
+        start_windows
+        start_macos
+        ;;
+    *)
+        echo "Usage: ./start [xubuntu|windows|macos|all]" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "All requested VMs are up. Use './stop' to shut down gracefully."

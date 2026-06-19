@@ -1,3 +1,65 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
+# =============================================================================
+# build — Build all container images
+#
+# Usage:
+#   ./build              Build all (xubuntu, windows, macos)
+#   ./build xubuntu      Build only Xubuntu
+#   ./build windows      Pull only Windows image
+#   ./build macos        Pull only macOS image
+# =============================================================================
+
+build_xubuntu() {
+    echo "═══ Building Xubuntu image... ═══"
+    docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
+    echo "✓ Xubuntu image built: xubuntu-dev:latest"
+}
+
+pull_windows() {
+    echo "═══ Pulling Windows image... ═══"
+    docker pull dockurr/windows
+    echo "✓ Windows image pulled: dockurr/windows"
+}
+
+pull_macos() {
+    echo "═══ Pulling macOS image... ═══"
+    docker pull dockurr/macos
+    echo "✓ macOS image pulled: dockurr/macos"
+}
+
+cleanup_build() {
+    echo "═══ Cleaning up build cache and dangling images... ═══"
+    docker image prune -f
+    docker builder prune -f
+    echo "✓ Build artifacts cleaned"
+}
+
+TARGET="${1:-all}"
+
+case "${TARGET}" in
+    xubuntu)
+        build_xubuntu
+        cleanup_build
+        ;;
+    windows)
+        pull_windows
+        ;;
+    macos)
+        pull_macos
+        ;;
+    all)
+        build_xubuntu
+        pull_windows
+        pull_macos
+        cleanup_build
+        ;;
+    *)
+        echo "Usage: ./build [xubuntu|windows|macos|all]" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "Done. Run './start' to launch."

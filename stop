@@ -1,3 +1,58 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-docker kill xubuntu-vm
+# =============================================================================
+# stop — Gracefully stop VM containers (preserves all data)
+#
+# Usage:
+#   ./stop               Stop all VMs
+#   ./stop xubuntu       Stop only Xubuntu
+#   ./stop windows       Stop only Windows
+#   ./stop macos         Stop only macOS
+#
+# Data is preserved. Use './start' to resume where you left off.
+# =============================================================================
+
+stop_xubuntu() {
+    echo "═══ Stopping Xubuntu... ═══"
+    docker compose -f docker-compose-xubuntu.yml stop
+    echo "✓ Xubuntu stopped"
+}
+
+stop_windows() {
+    echo "═══ Stopping Windows... ═══"
+    docker compose -f docker-compose-windows.yml stop
+    echo "✓ Windows stopped"
+}
+
+stop_macos() {
+    echo "═══ Stopping macOS... ═══"
+    docker compose -f docker-compose-macos.yml stop
+    echo "✓ macOS stopped"
+}
+
+TARGET="${1:-all}"
+
+case "${TARGET}" in
+    xubuntu)
+        stop_xubuntu
+        ;;
+    windows)
+        stop_windows
+        ;;
+    macos)
+        stop_macos
+        ;;
+    all)
+        stop_xubuntu
+        stop_windows
+        stop_macos
+        ;;
+    *)
+        echo "Usage: ./stop [xubuntu|windows|macos|all]" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "All requested VMs stopped. Data is preserved. './start' to resume."

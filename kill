@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# kill — Complete teardown: stop containers, remove volumes, purge Docker clutter
+#
+# This script is the nuclear option. It removes containers, their data, and
+# cleans up Docker's disk usage (dangling images, build cache, unused networks).
+#
+# Usage:
+#   ./kill               Kill + purge everything (all VMs + Docker cleanup)
+#   ./kill xubuntu       Kill only Xubuntu (container + volumes + data)
+#   ./kill windows       Kill only Windows (container + data)
+#   ./kill macos         Kill only macOS (container + data)
+#   ./kill docker        Only run Docker system cleanup (no VM teardown)
+#
+# WARNING: This destroys VM data. macOS/Windows installations will need to be
+#          redone from scratch. Xubuntu home directory contents will be lost.
+#          Use './stop' instead if you want to preserve data.
+# =============================================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
+ok()   { echo -e "${GREEN}✓ $1${NC}"; }
+err()  { echo -e "${RED}✗ $1${NC}"; }
+
+kill_xubuntu() {
+    echo "═══ Killing Xubuntu... ═══"
+    docker compose -f docker-compose-xubuntu.yml down -v 2>/dev/null || true
+    # Also kill any standalone container from ./run
+    docker rm -f xubuntu-vm 2>/dev/null || true
+    docker rm -f xubuntu-vm-interactive 2>/dev/null || true
+    # Remove bind mount data
+    rm -rf ./shared ./projects
+    # Remove the named volume if it somehow survived
+    docker volume rm xubuntu-home 2>/dev/null || true
+    ok "Xubuntu killed — container, volumes, and data removed"
+}
+
+kill_windows() {
+    echo "═══ Killing Windows... ═══"
+    docker compose -f docker-compose-windows.yml down 2>/dev/null || true
+    docker rm -f windows-vm 2>/dev/null || true
+    rm -rf ./windows-data ./windows-shared
+    ok "Windows killed — container, VM disk data, and shared folder removed"
+}
+
+kill_macos() {
+    echo "═══ Killing macOS... ═══"
+    docker compose -f docker-compose-macos.yml down 2>/dev/null || true
+    docker rm -f macos-vm 2>/dev/null || true
+    rm -rf ./macos-data ./macos-shared
+    ok "macOS killed — container, VM disk data, and shared folder removed"
+}
+
+cleanup_docker() {
+    echo ""
+    echo "═══ Cleaning up Docker system... ═══"
+
+    # Remove dangling images (layers no longer referenced by any tag)
+    echo "  Removing dangling images..."
+    docker image prune -f
+
+    # Remove unused build cache
+    echo "  Removing build cache..."
+    docker builder prune -f
+
+    # Remove unused networks (not attached to running containers)
+    echo "  Removing unused networks..."
+    docker network prune -f
+
+    # Remove stopped containers (shouldn't be any after the above, but just in case)
+    echo "  Removing stopped containers..."
+    docker container prune -f
+
+    # Remove unused volumes not attached to any container
+    echo "  Removing unused volumes..."
+    docker volume prune -f
+
+    echo ""
+    ok "Docker system cleaned"
+
+    # Show disk usage summary
+    echo ""
+    echo "═══ Current Docker disk usage: ═══"
+    docker system df
+}
+
+TARGET="${1:-all}"
+
+case "${TARGET}" in
+    xubuntu)
+        kill_xubuntu
+        cleanup_docker
+        ;;
+    windows)
+        kill_windows
+        cleanup_docker
+        ;;
+    macos)
+        kill_macos
+        cleanup_docker
+        ;;
+    docker)
+        cleanup_docker
+        ;;
+    all)
+        warn "This will destroy ALL VM data (Windows/macOS installations, Xubuntu home)."
+        echo ""
+        read -r -p "Are you sure? [y/N] " confirm
+        if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+        echo ""
+        kill_xubuntu
+        kill_windows
+        kill_macos
+        cleanup_docker
+        ;;
+    *)
+        echo "Usage: ./kill [xubuntu|windows|macos|docker|all]" >&2
+        echo "" >&2
+        echo "  xubuntu  — Kill Xubuntu container + volumes + bind mount data" >&2
+        echo "  windows  — Kill Windows container + VM disk data" >&2
+        echo "  macos    — Kill macOS container + VM disk data" >&2
+        echo "  docker   — Only run Docker system cleanup (no VM teardown)" >&2
+        echo "  all      — Kill everything + full Docker cleanup (default)" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "Done. Run './build' to rebuild, './start' to launch fresh."

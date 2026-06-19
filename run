@@ -1,11 +1,73 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-docker run -it --rm \
-  --user root \
-  --name="xubuntu-vm" \
-  --hostname="$(hostname)" \
-  --publish="3392:3389/tcp" \
-  --shm-size="2g" \
-  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-  --mount type=bind,source=/Users/dishin/shared,target=/shared \
-  xubuntu-dev:latest /bin/bash
+# =============================================================================
+# run — Run a VM container interactively (foreground, removed on exit)
+#
+# Usage:
+#   ./run                Run Xubuntu interactively (default)
+#   ./run xubuntu        Run Xubuntu interactively with bash
+#   ./run windows        Attach to Windows container logs
+#   ./run macos          Attach to macOS container logs
+#
+# For Xubuntu: opens an interactive bash shell (container is removed on exit).
+# For Windows/macOS: starts the VM and follows logs (Ctrl+C detaches, VM keeps
+#   running). Use './stop windows' or './stop macos' to shut down.
+# =============================================================================
+
+SHARED_DIR="${SHARED_DIR:-$(pwd)/shared}"
+mkdir -p "${SHARED_DIR}"
+
+run_xubuntu() {
+    echo "═══ Running Xubuntu interactively (bash)... ═══"
+    echo "    Container will be removed on exit."
+    echo ""
+
+    docker_sock_args=()
+    if [ -S /var/run/docker.sock ]; then
+        docker_sock_args=(--mount "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock")
+    fi
+
+    docker run -it --rm \
+        --name="xubuntu-vm-interactive" \
+        --hostname="$(hostname)" \
+        --publish="3392:3389/tcp" \
+        --shm-size="2g" \
+        ${docker_sock_args[@]+"${docker_sock_args[@]}"} \
+        --mount "type=bind,source=${SHARED_DIR},target=/home/ubuntu/shared" \
+        xubuntu-dev:latest /bin/bash
+}
+
+run_windows() {
+    echo "═══ Starting Windows and following logs... ═══"
+    echo "    Ctrl+C to detach (VM keeps running). './stop windows' to shut down."
+    echo ""
+    docker compose -f docker-compose-windows.yml up -d
+    docker compose -f docker-compose-windows.yml logs -f
+}
+
+run_macos() {
+    echo "═══ Starting macOS and following logs... ═══"
+    echo "    Ctrl+C to detach (VM keeps running). './stop macos' to shut down."
+    echo ""
+    docker compose -f docker-compose-macos.yml up -d
+    docker compose -f docker-compose-macos.yml logs -f
+}
+
+TARGET="${1:-xubuntu}"
+
+case "${TARGET}" in
+    xubuntu)
+        run_xubuntu
+        ;;
+    windows)
+        run_windows
+        ;;
+    macos)
+        run_macos
+        ;;
+    *)
+        echo "Usage: ./run [xubuntu|windows|macos]" >&2
+        exit 1
+        ;;
+esac

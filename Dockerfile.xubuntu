@@ -315,7 +315,6 @@ RUN apt-get update && \
 #                            virt-clone). Useful if you need to spin up
 #                            additional VMs inside the container
 #   bridge-utils           — Linux bridge management (brctl). Required for
-#   bridge-utils           — Linux bridge management (brctl). Required for 
 #                            setting up bridged networking for VMs
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
@@ -326,7 +325,8 @@ RUN apt-get update && apt-get install -y \
     libreadline-dev libsqlite3-dev libgdbm-dev libdb5.3-dev libbz2-dev \
     libexpat1-dev liblzma-dev libnss3-dev libc6-dev \
     openjdk-${JAVA_VERSION}-jdk-headless \
-    python3-behave python3-launchpadlib \
+    python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
+    python3-pip python3-full python3-behave python3-launchpadlib \
     libpulse0 libx11-6 libxcomposite1 libxcursor1 libxdamage1 \
     libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 \
     libasound2t64 libglu1-mesa mesa-utils \
@@ -375,9 +375,6 @@ RUN apt-get update && apt-get install -y \
 #   update-manager-core    — Ubuntu update manager backend. Provides
 #                            do-release-upgrade for upgrading the Ubuntu version
 #                            and unattended-upgrades support
-#   easyeffects            — PipeWire/PulseAudio audio effects processor
-#                            (equalizer, compressor, reverb). Successor to
-#                            pulseeffects, which is no longer available on Noble
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     xorg \
@@ -592,8 +589,10 @@ RUN apt-get update && apt-get install -y \
 #   Docker daemon. This is equivalent to root access on the host. Only do
 #   this in trusted environments (local dev, private CI runners).
 # -----------------------------------------------------------------------------
-RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
         https://download.docker.com/linux/ubuntu \
         $(. /etc/os-release && echo $VERSION_CODENAME) stable" \

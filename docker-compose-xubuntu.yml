@@ -220,24 +220,19 @@ services:
 
       # ── Shared folder (host ↔ container) ─────────────────────────────
       # Bind mount for exchanging files between host and container.
-      # Files in ./shared on the host appear at /shared in the container.
-      # - ./shared:/shared
-
       # Files in ./shared on the host appear at /home/ubuntu/shared in the container.
       - ./shared:/home/ubuntu/shared
 
       # ── Project directory (host ↔ container) ─────────────────────────
       # Bind mount your project folder for development.
-      # Uncomment and adjust the host path:
       - ./projects:/home/ubuntu/projects
 
       # ── Docker socket (for docker CLI inside container) ──────────────
-      # Uncomment to enable docker commands inside the container.
       # SECURITY: Mounting docker.sock grants the container root-equivalent
-      #           control over the host Docker daemon. Leave this disabled
-      #           unless you are in a trusted environment and need DooD.
-      # NOTE: This path only exists on Linux/macOS hosts. On Windows, Docker
-      #       Desktop exposes the daemon via a named pipe, not this socket.
+      #           control over the host Docker daemon. Only use in trusted
+      #           environments (local dev, private CI runners).
+      # NOTE: This path works on Linux/macOS. On Windows with Docker Desktop,
+      #       use //var/run/docker.sock or the named pipe \\.\pipe\docker_engine.
       - /var/run/docker.sock:/var/run/docker.sock
 
     # Restart policy — keeps the container running after host reboot

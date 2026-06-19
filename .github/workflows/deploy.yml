@@ -1,0 +1,218 @@
+# =============================================================================
+# GitHub Actions — Build, Test, and Deploy
+#
+# Pipeline: Build → Test (JUnit report) → Deploy to Docker Hub
+# Triggers on push to master/main or manual dispatch.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   DOCKERHUB_USERNAME   — Docker Hub username
+#   DOCKERHUB_TOKEN      — Docker Hub access token
+#
+# Optional Repository Variables (Settings → Variables → Actions):
+#   RUNNER_LABEL         — Self-hosted runner label (default: ubuntu-latest)
+# =============================================================================
+
+name: Build, Test & Deploy
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: xubuntu-dev
+  DOCKER_REPO: docker-remote-desktop
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STAGE 1: BUILD
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build Image
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+
+    steps:
+      - name: Clean runner
+        run: |
+          docker system prune -af --volumes
+          docker builder prune -af
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build --no-cache -f Dockerfile.xubuntu -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.IMAGE_NAME }}:latest
+          echo "✓ Built ${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+      - name: Save image to tar
+        run: |
+          docker save ${{ env.IMAGE_NAME }}:latest | gzip > image.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STAGE 2: TEST
+  # ═══════════════════════════════════════════════════════════════════════════
+  test:
+    name: Test Image
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: build
+
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load image
+        run: |
+          docker load < image.tar.gz
+          docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.IMAGE_NAME }}:test
+
+      - name: Run validation tests
+        run: |
+          mkdir -p test-results
+          
+          # Start container
+          docker run -d --name test-vm ${{ env.IMAGE_NAME }}:test
+          sleep 15
+
+          # ── Generate JUnit XML ──
+          TESTS=0; FAILURES=0; START=$(date +%s)
+          REPORT="test-results/junit-report.xml"
+
+          echo '<?xml version="1.0" encoding="UTF-8"?>' > "$REPORT"
+          echo '<testsuites>' >> "$REPORT"
+          echo '  <testsuite name="ImageValidation">' >> "$REPORT"
+
+          run_test() {
+            local name="$1"; shift
+            TESTS=$((TESTS + 1))
+            if "$@" > /dev/null 2>&1; then
+              echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"/>" >> "$REPORT"
+              echo "✓ ${name}"
+            else
+              FAILURES=$((FAILURES + 1))
+              echo "    <testcase classname=\"ImageValidation\" name=\"${name}\"><failure message=\"FAILED\"/></testcase>" >> "$REPORT"
+              echo "✗ ${name}"
+            fi
+          }
+
+          # Tests
+          run_test "Container is running" \
+            docker ps --filter name=test-vm --filter status=running --format '{{.Names}}' | grep -qx test-vm
+
+          run_test "xrdp listening on 3389" \
+            docker exec test-vm bash -c "ss -tlnp | grep -q :3389"
+
+          run_test "Python 3.12 installed" \
+            docker exec test-vm bash -c "python3 --version | grep -q '3.12'"
+
+          run_test "Java 21 installed" \
+            docker exec test-vm bash -c "java -version 2>&1 | grep -q '21'"
+
+          run_test "Node.js 20 installed" \
+            docker exec test-vm bash -c "node --version | grep -q 'v20'"
+
+          run_test "Docker CLI installed" \
+            docker exec test-vm bash -c "docker --version | grep -q 'Docker version'"
+
+          run_test "Gradle installed" \
+            docker exec test-vm bash -c "gradle --version 2>&1 | grep -q 'Gradle'"
+
+          run_test "Maven installed" \
+            docker exec test-vm bash -c "mvn --version 2>&1 | grep -q 'Maven'"
+
+          run_test "Ant installed" \
+            docker exec test-vm bash -c "ant -version 2>&1 | grep -q 'Ant'"
+
+          run_test "Ubuntu user exists" \
+            docker exec test-vm id ubuntu
+
+          run_test "SSH keys regenerated" \
+            docker exec test-vm test -f /etc/ssh/.keys_regenerated
+
+          run_test "adb available" \
+            docker exec test-vm bash -c "which adb"
+
+          # Close XML
+          DURATION=$(($(date +%s) - START))
+          echo "  </testsuite>" >> "$REPORT"
+          echo "</testsuites>" >> "$REPORT"
+          sed -i "s/<testsuite name=\"ImageValidation\">/<testsuite name=\"ImageValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
+
+          # Cleanup
+          docker rm -f test-vm || true
+
+          echo ""
+          echo "═══ ${TESTS} tests, ${FAILURES} failures, ${DURATION}s ═══"
+          [ "$FAILURES" -eq 0 ] || exit 1
+
+      - name: Upload JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-report
+          path: test-results/junit-report.xml
+          retention-days: 90
+
+      - name: Publish test results
+        uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          report_paths: test-results/junit-report.xml
+          check_name: Container Validation
+          fail_on_failure: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STAGE 3: DEPLOY
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: Push to Docker Hub
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate tags
+        id: tags
+        run: |
+          echo "date=$(date +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+          echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.xubuntu
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_REPO }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_REPO }}:${{ steps.tags.outputs.date }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_REPO }}:${{ steps.tags.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Cleanup
+        if: always()
+        run: docker system prune -af --volumes

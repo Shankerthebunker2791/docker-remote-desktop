@@ -1,2 +1,16 @@
 .DS_Store
 .vscode/
+
+# Runtime VM data and shared folders (can contain large disk images / private files)
+windows-data/
+windows-shared/
+macos-data/
+macos-shared/
+shared/
+projects/
+oem/
+*.iso
+
+# Secrets / local environment
+.env
+*.env

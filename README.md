@@ -1,6 +1,5 @@
 # docker-desktop
 
-[![build](https://github.com/scottyhardy/docker-remote-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/scottyhardy/docker-remote-desktop/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/scottyhardy/docker-remote-desktop.svg?style=social)](https://github.com/scottyhardy/docker-remote-desktop/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/scottyhardy/docker-remote-desktop.svg?style=social)](https://github.com/scottyhardy/docker-remote-desktop/network)
 [![Docker Stars](https://img.shields.io/docker/stars/scottyhardy/docker-remote-desktop.svg?style=social)](https://hub.docker.com/r/scottyhardy/docker-remote-desktop)
@@ -158,13 +157,16 @@ docker compose -f docker-compose-xubuntu.yml down -v
 docker compose -f docker-compose-xubuntu.yml down -v
 rm -rf ./shared ./projects
 
-# Windows — remove VM disk data
+# Windows — remove VM disk data + shared folder
 docker compose -f docker-compose-windows.yml down
-rm -rf ./windows-data
+rm -rf ./windows-data ./windows-shared
 
-# macOS — remove VM disk data
+# macOS — remove VM disk data + shared folder
 docker compose -f docker-compose-macos.yml down
-rm -rf ./macos-data
+rm -rf ./macos-data ./macos-shared
+
+# Or simply:
+./kill all
 ```
 
 ### Remove built images
@@ -185,7 +187,9 @@ docker rmi dockurr/macos
 | Xubuntu | Bind mount `./shared` → `/home/ubuntu/shared` | `./shared` |
 | Xubuntu | Bind mount `./projects` → `/home/ubuntu/projects` | `./projects` |
 | Windows | Bind mount `./windows-data` → `/storage` | `./windows-data` |
+| Windows | Bind mount `./windows-shared` → `/shared` | `./windows-shared` |
 | macOS | Bind mount `./macos-data` → `/storage` | `./macos-data` |
+| macOS | Bind mount `./macos-shared` → `/shared` | `./macos-shared` |
 
 **What survives what:**
 
@@ -247,11 +251,16 @@ docker build --no-cache -f Dockerfile.xubuntu -t xubuntu-dev .
 
 | Script | Purpose |
 |---|---|
-| `./build` | Build the Xubuntu Docker image |
-| `./run` | Run container interactively with bash |
-| `./start` | Start container as a detached daemon |
-| `./stop` | Stop (kill) the running container |
-| `./deploy` | Tag and push image to Docker Hub |
+| `./build` | Build/pull all images (or target one: `./build xubuntu`) |
+| `./start` | Start all VMs as daemons (or target one: `./start windows`) |
+| `./stop` | Gracefully stop VMs, preserving data (or target one) |
+| `./run` | Run a VM interactively (`./run xubuntu` for bash, `./run windows` for logs) |
+| `./kill` | Full teardown + Docker cleanup (`./kill all` or `./kill xubuntu`) |
+| `./deploy` | Tag and push Xubuntu image to Docker Hub |
+
+All scripts accept a target argument: `xubuntu`, `windows`, `macos`, or `all` (default).
+
+The `./kill` script is the nuclear option — it removes containers, volumes, bind-mount data, and purges Docker clutter (dangling images, build cache, unused networks/volumes). Use `./kill docker` to only clean Docker without touching VM data.
 
 ---
 
@@ -275,7 +284,7 @@ Pulls and runs `dockurr/windows` with QEMU emulation. Key configuration:
 - **RDP port:** Host `3390` → Container `3389`
 - **Windows version:** Configurable via `VERSION` env var (default: `xp`)
 - **Resources:** 4 GB RAM, 2 CPU cores, 30 GB virtual disk
-- **Volumes:** `./windows-data` for VM disk, `./shared` for file exchange
+- **Volumes:** `./windows-data` for VM disk, `./windows-shared` for file exchange
 - **KVM:** Disabled (`KVM: "N"`)
 - **Restart policy:** `unless-stopped`
 - **Graceful shutdown:** 2 minute stop grace period
@@ -288,10 +297,80 @@ Pulls and runs `dockurr/macos` with QEMU emulation. Key configuration:
 - **VNC port:** Host `5901` → Container `5900`
 - **macOS version:** Configurable via `VERSION` env var (default: `11` Big Sur)
 - **Resources:** 4 GB RAM, 2 CPU cores, 30 GB virtual disk
-- **Volumes:** `./macos-data` for VM disk, `./shared` for file exchange
+- **Volumes:** `./macos-data` for VM disk, `./macos-shared` for file exchange
 - **KVM:** Disabled (`KVM: "N"`)
 - **Restart policy:** `unless-stopped`
 - **Graceful shutdown:** 2 minute stop grace period
+
+---
+
+## Custom ISO
+
+To use your own installer ISO instead of auto-downloading:
+
+1. Drop the file into the project root:
+   - Windows: name it `windows.iso`
+   - macOS: name it `macos.iso`
+
+2. Uncomment the mount line in the corresponding compose file:
+   ```yaml
+   # docker-compose-windows.yml
+   - ./windows.iso:/boot.iso
+
+   # docker-compose-macos.yml
+   - ./macos.iso:/boot.iso
+   ```
+
+When `/boot.iso` is mounted, the `VERSION` env var is ignored and your local ISO is used instead.
+
+ISOs are excluded from git via `.gitignore` (`*.iso`).
+
+---
+
+## CI/CD Pipeline
+
+Both GitHub Actions and GitLab CI configurations are included. They run the same pipeline:
+
+**Build → Test → Deploy**
+
+| Stage | What it does |
+|-------|-------------|
+| Build | Cleans runner, builds image from `Dockerfile.xubuntu`, saves as artifact |
+| Test | Loads image, starts container, runs 12 validation tests, generates JUnit XML |
+| Deploy | Tags and pushes multi-arch image to Docker Hub (`latest`, datestamp, commit SHA) |
+
+### GitHub Actions (`.github/workflows/deploy.yml`)
+
+**Setup:**
+1. Add secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Settings → Secrets → Actions)
+2. Optionally set `RUNNER_LABEL` variable to your self-hosted runner label (defaults to `ubuntu-latest`)
+
+**Test results:** Visible in the **Checks** tab on commits and PRs. JUnit report artifact retained 90 days.
+
+### GitLab CI (`.gitlab-ci.yml`)
+
+**Setup:**
+1. Add CI/CD variables: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Settings → CI/CD → Variables, masked)
+2. Optionally set `RUNNER_TAG` variable to your runner's tag (defaults to `docker`)
+
+**Test results:** Visible in the **Tests** tab on pipeline pages and in merge request widgets. JUnit artifact retained 90 days.
+
+### Tests Executed
+
+| # | Test |
+|---|------|
+| 1 | Container starts and stays running |
+| 2 | xrdp listening on port 3389 |
+| 3 | Python 3.12 installed |
+| 4 | Java 21 installed |
+| 5 | Node.js 20 installed |
+| 6 | Docker CLI installed |
+| 7 | Gradle installed |
+| 8 | Maven installed |
+| 9 | Ant installed |
+| 10 | Ubuntu user exists |
+| 11 | SSH host keys regenerated |
+| 12 | adb (Android) available |
 
 ---
 
