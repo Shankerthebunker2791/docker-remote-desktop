@@ -602,6 +602,38 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
+# 2e. POWERSHELL (Microsoft official package)
+#
+#   pwsh — PowerShell Core (cross-platform). Useful for running .ps1 scripts,
+#          Azure/AWS automation, and cross-platform scripting.
+# -----------------------------------------------------------------------------
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg \
+    && chmod a+r /etc/apt/keyrings/microsoft.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-ubuntu-$(. /etc/os-release && echo $VERSION_CODENAME)-prod $(. /etc/os-release && echo $VERSION_CODENAME) main" \
+        | tee /etc/apt/sources.list.d/microsoft.list \
+    && apt-get update \
+    && apt-get install -y powershell \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2f. GITLAB RUNNER (official binary)
+#
+#   gitlab-runner — GitLab CI/CD runner agent. Allows this container to act as
+#                   a self-hosted runner for GitLab pipelines.
+# -----------------------------------------------------------------------------
+RUN curl -fsSL "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | bash \
+    && apt-get install -y gitlab-runner \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2g. TELNET CLIENT
+#
+#   telnet — Network diagnostic tool for testing TCP port connectivity.
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y telnet \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
 # 3. NODE.JS & NPM (LTS via NodeSource)
 #
 # Installs Node.js from the official NodeSource repository instead of Ubuntu's

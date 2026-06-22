@@ -235,6 +235,32 @@ services:
       #       use //var/run/docker.sock or the named pipe \\.\pipe\docker_engine.
       - /var/run/docker.sock:/var/run/docker.sock
 
+    # ── USB DEVICE PASSTHROUGH (Linux hosts only) ──────────────────────
+    # To pass USB devices (hard drives, capture cards, cameras, etc.)
+    # into the container, uncomment the devices section below.
+    #
+    # Option A — Pass ALL USB devices:
+    #   devices:
+    #     - /dev/bus/usb:/dev/bus/usb
+    #
+    # Option B — Pass a specific device (find path with: lsusb + ls /dev/bus/usb/):
+    #   devices:
+    #     - /dev/bus/usb/001/003:/dev/bus/usb/001/003
+    #
+    # Option C — Pass by major/minor (for block devices like USB drives):
+    #   devices:
+    #     - /dev/sdb:/dev/sdb
+    #
+    # Option D — Video capture cards (e.g., Elgato, AVerMedia):
+    #   devices:
+    #     - /dev/video0:/dev/video0
+    #     - /dev/video1:/dev/video1
+    #
+    # NOTE: USB passthrough only works on Linux hosts. On macOS/Windows,
+    #       Docker Desktop runs inside a VM and cannot access host USB directly.
+    #       For macOS/Windows, use the Windows/macOS QEMU VMs instead
+    #       (they support USB passthrough via the ARGUMENTS env var).
+
     # Restart policy — keeps the container running after host reboot
     restart: unless-stopped
 

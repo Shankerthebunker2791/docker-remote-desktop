@@ -19,12 +19,13 @@ A collection of Docker Compose configurations for running full desktop virtual m
 
 A full Xubuntu desktop built from `Dockerfile.xubuntu` with a complete CI/CD toolchain pre-installed:
 
-- **Languages:** Java 21 (OpenJDK), Python 3.12, Node.js 20 LTS
+- **Languages:** Java 21 (OpenJDK), Python 3.12, Node.js 20 LTS, PowerShell (pwsh)
 - **Build tools:** Gradle 9.4.1, Maven 3.9.9, Ant 1.10.17
 - **Mobile:** Android SDK, emulator, platform-tools (adb)
 - **Containers:** Docker CLI, Docker Compose, Buildx (Docker-outside-of-Docker via socket mount)
+- **CI/CD:** GitLab Runner (pre-installed, ready to register)
 - **Desktop apps:** Firefox, LibreOffice, GIMP, VLC, VS Code-friendly terminal emulators, and more
-- **Utilities:** Git, tmux, jq, shellcheck, strace, meld, and many more
+- **Utilities:** Git, tmux, jq, shellcheck, strace, meld, telnet, ffmpeg, and many more
 
 ### Windows VM
 
@@ -327,80 +328,277 @@ ISOs are excluded from git via `.gitignore` (`*.iso`).
 
 ---
 
+## USB Device Passthrough
+
+You can pass USB devices (external hard drives, video capture cards, cameras, etc.) from the host into the VMs.
+
+### Platform Support
+
+| Host OS | Xubuntu | Windows VM | macOS VM |
+|---------|---------|-----------|----------|
+| **Linux** | ✅ Direct (`devices:`) | ✅ Via QEMU (`ARGUMENTS`) | ✅ Via QEMU (`ARGUMENTS`) |
+| **macOS** | ❌ Not possible | ❌ Not possible | ❌ Not possible |
+| **Windows** | ❌ Not possible | ❌ Not possible | ❌ Not possible |
+
+USB passthrough requires a **Linux host** because Docker Desktop on macOS/Windows runs inside its own VM and cannot access host USB hardware directly.
+
+### Xubuntu (native container, Linux host)
+
+Add to `docker-compose-xubuntu.yml`:
+
+```yaml
+devices:
+  # All USB devices:
+  - /dev/bus/usb:/dev/bus/usb
+
+  # Or specific device (find with: lsusb && ls /dev/bus/usb/):
+  - /dev/bus/usb/001/003:/dev/bus/usb/001/003
+
+  # USB hard drive (block device):
+  - /dev/sdb:/dev/sdb
+
+  # Video capture card:
+  - /dev/video0:/dev/video0
+```
+
+### Windows / macOS VMs (QEMU, Linux host)
+
+Add to the `environment:` section of the compose file:
+
+```yaml
+environment:
+  ARGUMENTS: "-device usb-host,vendorid=0x1234,productid=0x5678"
+```
+
+Find your device's vendor/product ID with: `lsusb`
+
+Also mount the USB bus:
+```yaml
+devices:
+  - /dev/bus/usb
+```
+
+### Finding Your USB Device
+
+On the Linux host:
+```bash
+# List all USB devices with vendor:product IDs
+lsusb
+
+# Example output:
+# Bus 001 Device 003: ID 1f75:0917 Innostor Technology Corporation
+#                        ^^^^ ^^^^
+#                        vendorid  productid
+
+# For video capture cards:
+ls /dev/video*
+
+# For USB drives:
+lsblk
+```
+
+---
+
 ## CI/CD Pipeline
 
-Both GitHub Actions and GitLab CI configurations are included. They run the same pipeline on **any branch push**:
+Both GitHub Actions and GitLab CI configurations are included. They run the same pipeline on **any branch push** or manual trigger.
 
-**Clean → Build → Deploy → Test**
+**Pipeline flow:** Clean → Build → Deploy → Test
 
 | Stage | What it does |
 |-------|-------------|
 | Clean | Stops all running VMs, purges Docker (images, volumes, cache), removes data dirs |
 | Build | Builds Xubuntu from `Dockerfile.xubuntu`, pulls `dockurr/windows` + `dockurr/macos` |
 | Deploy | `docker compose up -d` for all three VMs — they stay running on the machine |
-| Test | 14 validation tests, generates JUnit XML report |
+| Test | 18 validation tests, generates JUnit XML report viewable in GitHub/GitLab UI |
 
-VMs remain running until the next push triggers a fresh clean + redeploy.
+VMs remain running on the remote machine indefinitely until the next push triggers a fresh clean + redeploy cycle.
+
+---
+
+### How It Works
+
+1. You push code to any branch (or click "Run pipeline" manually)
+2. The CI system picks up the job and routes it to your self-hosted runner
+3. The runner **stops and removes** all existing Docker containers, images, volumes
+4. It **builds** the Xubuntu image from scratch and pulls Windows/macOS images
+5. It **starts** all three VMs via `docker compose up -d`
+6. It **runs 18 tests** to verify everything is healthy and generates a JUnit XML report
+7. The VMs **stay running** on the machine — you connect via RDP/VNC from anywhere
+8. Next time you push, step 1-7 repeats (full clean slate each time)
+
+---
 
 ### Platform Compatibility
 
-The pipeline and compose files work on **any OS** with Docker installed:
-
 | Runner OS | Xubuntu | Windows VM | macOS VM | Notes |
 |-----------|---------|-----------|----------|-------|
-| **Linux** | ✅ | ✅ Best (KVM) | ✅ Best (KVM) | Enable KVM for acceptable QEMU performance |
-| **macOS** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU falls back to TCG emulation |
-| **Windows** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU falls back to TCG emulation |
+| **Linux** | ✅ | ✅ Best (KVM) | ✅ Best (KVM) | Enable KVM for 10-50x faster QEMU VMs |
+| **macOS** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU uses software emulation |
+| **Windows** | ✅ | ⚠️ Slow | ⚠️ Slow | No KVM — QEMU uses software emulation |
 
-**Key points:**
-- All compose files set `KVM: "N"` so VMs start on any host without error
-- On Linux with KVM available, uncomment `devices: [/dev/kvm]` in the compose files for 10-50x faster Windows/macOS VMs
-- Xubuntu is a native container — runs at full speed on all platforms
-- Docker socket mount (`/var/run/docker.sock`) works on Linux and macOS. On Windows with Docker Desktop, Docker Compose handles the translation automatically
-- The macOS VM requires Apple hardware per Apple's EULA (only enforced legally, not technically)
+---
 
-### GitHub Actions (`.github/workflows/deploy.yml`)
+### GitHub Actions Setup
 
-**Setup:**
-1. Install a [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners) on your remote machine
-2. Set repository variable `RUNNER_LABEL` = your runner's label (Settings → Variables → Actions)
-3. Add secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
-4. Push to any branch
+**File:** `.github/workflows/deploy.yml`
 
-**Test results:** Visible in the **Checks** tab. JUnit artifact retained 90 days.
+**Pre-conditions:**
+- A remote machine (Linux/macOS/Windows) where you want the VMs to run
+- Docker and Docker Compose installed on that machine
+- Network access from your machine to the runner (for RDP/VNC connections)
 
-### GitLab CI (`.gitlab-ci.yml`)
+**Step-by-step setup:**
 
-**Setup:**
-1. Register a [GitLab Runner](https://docs.gitlab.com/runner/install/) with **shell executor** on your remote machine:
+1. **Install the GitHub Actions runner** on your remote machine:
    ```bash
-   gitlab-runner register --executor shell --tag-list "docker" --url https://gitlab.com --token YOUR_TOKEN
+   # Download from: https://github.com/YOUR_ORG/YOUR_REPO/settings/actions/runners/new
+   # Then:
+   ./config.sh --url https://github.com/YOUR_ORG/YOUR_REPO --token YOUR_TOKEN
+   ./run.sh   # or install as service: sudo ./svc.sh install && sudo ./svc.sh start
    ```
-2. Set CI/CD variables: `RUNNER_TAG` (your runner tag), `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
-3. Push to any branch
 
-**Why shell executor?** Docker executor runs jobs inside throwaway containers — VMs would die when the job ends. Shell executor runs directly on the host so VMs persist after the pipeline finishes.
+2. **Set the runner label** (so the workflow knows which runner to use):
+   - Go to: Repository → Settings → Variables → Actions
+   - Add variable: `RUNNER_LABEL` = the label you gave your runner (e.g., `self-hosted`, `my-mac`, `linux-server`)
+   - If you skip this, it defaults to `self-hosted`
 
-**Test results:** Visible in the **Tests** tab on pipeline pages and merge request widgets. JUnit artifact retained 90 days.
+3. **Add Docker Hub secrets** (for pulling images):
+   - Go to: Repository → Settings → Secrets → Actions
+   - Add: `DOCKERHUB_USERNAME` = your Docker Hub username
+   - Add: `DOCKERHUB_TOKEN` = your Docker Hub access token ([create here](https://hub.docker.com/settings/security))
+
+4. **Push to any branch** — the pipeline triggers automatically:
+   ```bash
+   git push
+   ```
+
+5. **View results:**
+   - Pipeline progress: Actions tab in your repository
+   - Test report: Click the workflow run → "VM Validation" check → see pass/fail per test
+   - JUnit artifact: downloadable from the Artifacts section (retained 90 days)
+
+**Runner variable reference:**
+
+| Variable/Secret | Where to set | Purpose |
+|---|---|---|
+| `RUNNER_LABEL` | Settings → Variables → Actions | Selects which runner to use |
+| `DOCKERHUB_USERNAME` | Settings → Secrets → Actions | Docker Hub login |
+| `DOCKERHUB_TOKEN` | Settings → Secrets → Actions | Docker Hub authentication |
+
+---
+
+### GitLab CI Setup
+
+**File:** `.gitlab-ci.yml`
+
+**Pre-conditions:**
+- A remote machine (Linux/macOS/Windows) where you want the VMs to run
+- Docker and Docker Compose installed on that machine
+- GitLab Runner installed on that machine
+- The runner must use **shell executor** (not docker executor!)
+
+**Why shell executor?** The docker executor runs each job inside a throwaway container — when the job ends, the container (and your VMs inside it) dies. Shell executor runs directly on the host OS, so the VMs persist after the pipeline finishes and you can connect to them anytime.
+
+**Step-by-step setup:**
+
+1. **Install GitLab Runner** on your remote machine:
+   ```bash
+   # macOS:
+   brew install gitlab-runner
+
+   # Linux (Debian/Ubuntu):
+   curl -fsSL https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh | sudo bash
+   sudo apt install gitlab-runner
+
+   # Windows:
+   # Download from https://docs.gitlab.com/runner/install/windows.html
+   ```
+
+2. **Register the runner with shell executor:**
+   ```bash
+   gitlab-runner register \
+     --executor shell \
+     --tag-list "docker" \
+     --url https://gitlab.com \
+     --token YOUR_REGISTRATION_TOKEN
+   ```
+   Get your registration token from: Repository → Settings → CI/CD → Runners → "New project runner"
+
+   The `--tag-list` value (e.g., `"docker"`) is the tag you'll reference in the CI/CD variables.
+
+3. **Start the runner:**
+   ```bash
+   # Foreground (for testing):
+   gitlab-runner run
+
+   # As a service (recommended):
+   gitlab-runner install && gitlab-runner start
+   ```
+
+4. **Set CI/CD variables:**
+   - Go to: Repository → Settings → CI/CD → Variables
+   - Add: `RUNNER_TAG` = the tag you registered with (e.g., `docker`)
+   - Add: `DOCKERHUB_USERNAME` = your Docker Hub username (check "Mask variable")
+   - Add: `DOCKERHUB_TOKEN` = your Docker Hub access token (check "Mask variable")
+
+5. **Push to any branch** — the pipeline triggers automatically:
+   ```bash
+   git push
+   ```
+
+6. **View results:**
+   - Pipeline progress: CI/CD → Pipelines
+   - Test report: Click pipeline → "Tests" tab (shows pass/fail per test in the UI)
+   - Merge request widget: If you push to a branch with an open MR, test results appear inline
+   - JUnit artifact: downloadable from the job page (retained 90 days)
+
+**CI/CD variable reference:**
+
+| Variable | Where to set | Purpose |
+|---|---|---|
+| `RUNNER_TAG` | Settings → CI/CD → Variables | Matches your runner's registered tag |
+| `DOCKERHUB_USERNAME` | Settings → CI/CD → Variables (masked) | Docker Hub login |
+| `DOCKERHUB_TOKEN` | Settings → CI/CD → Variables (masked) | Docker Hub authentication |
+
+---
+
+### Connecting After Deploy
+
+Once the pipeline finishes successfully, the VMs are running on your remote machine. Connect from any device on the same network:
+
+| VM | Connection | Address |
+|----|-----------|---------|
+| Xubuntu | RDP client | `<runner-ip>:3392` (ubuntu/ubuntu) |
+| Windows | RDP client or browser | `<runner-ip>:3390` (Docker/admin) or `http://<runner-ip>:8009` |
+| macOS | VNC client or browser | `<runner-ip>:5901` or `http://<runner-ip>:8006` |
+
+Replace `<runner-ip>` with the IP/hostname of your remote runner machine. Use `localhost` if connecting from the runner itself.
+
+---
 
 ### Tests Executed
 
-| # | Test |
-|---|------|
-| 1 | Xubuntu container running |
-| 2 | xrdp listening on port 3389 |
-| 3 | Python 3.12 installed |
-| 4 | Java 21 installed |
-| 5 | Node.js 20 installed |
-| 6 | Docker CLI installed |
-| 7 | Gradle installed |
-| 8 | Maven installed |
-| 9 | Ant installed |
-| 10 | Ubuntu user exists |
-| 11 | SSH host keys regenerated |
-| 12 | adb (Android) available |
-| 13 | Windows container running |
-| 14 | macOS container running |
+| # | Test | What it validates |
+|---|------|---|
+| 1 | Xubuntu container running | Container started and didn't crash |
+| 2 | xrdp listening on 3389 | RDP server is accepting connections |
+| 3 | Python 3.12 installed | Python interpreter works |
+| 4 | Java 21 installed | JDK is functional |
+| 5 | Node.js 20 installed | Node runtime works |
+| 6 | Docker CLI installed | Docker-outside-of-Docker functional |
+| 7 | Gradle installed | Build tool available |
+| 8 | Maven installed | Build tool available |
+| 9 | Ant installed | Build tool available |
+| 10 | Ubuntu user exists | User account created by entrypoint |
+| 11 | SSH host keys regenerated | Security: unique keys per container |
+| 12 | adb (Android) available | Android SDK path configured |
+| 13 | PowerShell (pwsh) available | Cross-platform scripting ready |
+| 14 | GitLab Runner available | Can register as nested runner |
+| 15 | telnet available | Network diagnostic tool |
+| 16 | ffmpeg available | Media processing tool |
+| 17 | Windows container running | QEMU VM started successfully |
+| 18 | macOS container running | QEMU VM started successfully |
 
 ---
 
@@ -412,7 +610,31 @@ The pipeline and compose files work on **any OS** with Docker installed:
   - Windows: ~20-30 GB after installation
   - macOS: ~25-40 GB after installation
 - **KVM** (optional): Only required for the Android emulator inside Xubuntu, or for better performance with Windows/macOS VMs on Linux hosts
-- **Apple hardware** (macOS only): Required by Apple's EULA
+- **Apple hardware** (macOS VM only): Required by Apple's EULA
+
+---
+
+## Apple Silicon (M1/M2/M3/M4) Support
+
+This project fully supports Apple Silicon Macs. No changes needed — just run the compose files as-is.
+
+| VM | Apple Silicon | Performance | Notes |
+|----|---|---|---|
+| **Xubuntu** | ✅ Works | Full speed | Docker Desktop runs arm64 Linux containers natively via Hypervisor.framework |
+| **Windows VM** | ✅ Works | Slow (no KVM) | QEMU emulates x86 via software (TCG). XP/7 usable, Win 10/11 sluggish |
+| **macOS VM** | ⚠️ Works | Slow (no KVM) | QEMU emulation. For better performance, use UTM or Parallels instead |
+
+**Why it works out of the box:**
+
+- The Dockerfile detects `arm64` via `dpkg --print-architecture` and installs the correct packages (ARM Java, ARM Android system image, ARM Node.js)
+- All compose files set `KVM: "N"` so QEMU skips the KVM check and uses software emulation
+- Docker Desktop on Apple Silicon builds arm64 images natively — no Rosetta needed for the Xubuntu container
+
+**Tips for Apple Silicon:**
+
+- Xubuntu runs at full native speed — use it as your main dev environment
+- For Windows, use `VERSION: "xp"` or `VERSION: "7u"` for acceptable performance under emulation
+- If you need a fast Windows/macOS VM on Apple Silicon, consider UTM (free) or Parallels (paid) for those, and use this project for the Xubuntu dev environment
 
 ---
 

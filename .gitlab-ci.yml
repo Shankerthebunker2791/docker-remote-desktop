@@ -202,6 +202,18 @@ test:
       run_test "adb available" \
         "docker exec xubuntu-vm which adb"
 
+      run_test "PowerShell available" \
+        "docker exec xubuntu-vm bash -c 'pwsh -Version | grep -q PowerShell'"
+
+      run_test "GitLab Runner available" \
+        "docker exec xubuntu-vm bash -c 'gitlab-runner --version | grep -q Version'"
+
+      run_test "telnet available" \
+        "docker exec xubuntu-vm which telnet"
+
+      run_test "ffmpeg available" \
+        "docker exec xubuntu-vm bash -c 'ffmpeg -version | grep -q ffmpeg'"
+
       # ── Windows Tests ──
       run_test "Windows container running" \
         "docker ps --filter name=windows-vm --filter status=running --format '{{.Names}}' | grep -qx windows-vm"

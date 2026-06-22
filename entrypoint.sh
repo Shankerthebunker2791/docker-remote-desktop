@@ -44,15 +44,27 @@ mkdir -p /home/ubuntu
 chown ubuntu:ubuntu /home/ubuntu
 
 # 4. Standardize the X11 session & D-Bus plumbing. PulseAudio is started here,
-#    inside the user's session, and is the SINGLE place it gets launched (the
-#    previous duplicate system-wide start has been removed to avoid two daemons
-#    fighting over the same socket).
+#    inside the user's session, with xrdp audio modules loaded explicitly.
+#    We wait for PulseAudio to be ready before launching XFCE so that
+#    pavucontrol and panel plugins can connect immediately.
 cat << 'EOF' > /home/ubuntu/.xsession
 #!/usr/bin/env bash
 # Spawn a per-session D-Bus bus so PulseAudio can register its socket loop.
-export $(dbus-launch)
-# Start PulseAudio only if it isn't already running for this session.
-pulseaudio --check || pulseaudio --start --exit-idle-time=-1 &
+eval "$(dbus-launch --sh-syntax)"
+export DBUS_SESSION_BUS_ADDRESS
+export DBUS_SESSION_BUS_PID
+
+# Start PulseAudio and wait for it to be ready (up to 5 seconds).
+pulseaudio --check 2>/dev/null || pulseaudio --start --exit-idle-time=-1
+for i in $(seq 1 10); do
+  pulseaudio --check 2>/dev/null && break
+  sleep 0.5
+done
+
+# Load xrdp audio sink/source modules so sound routes over RDP.
+pactl load-module module-xrdp-sink 2>/dev/null || true
+pactl load-module module-xrdp-source 2>/dev/null || true
+
 exec xfce4-session
 EOF
 
