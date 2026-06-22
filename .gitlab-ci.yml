@@ -16,14 +16,14 @@
 #   DOCKERHUB_USERNAME   — Docker Hub username (masked)
 #   DOCKERHUB_TOKEN      — Docker Hub access token (masked)
 #   RUNNER_TAG           — Tag of your self-hosted runner (e.g., "docker",
-#                          "linux", "macos", "windows"). Must match the tag
-#                          your runner is registered with.
+#                          "macos", "linux", "windows"). Must match the tag your runner
+#                          is registered with. Requires GitLab 14.1+.
 #
 # Runner requirements:
 #   - Any OS (Linux, macOS, Windows) with Docker + Docker Compose installed
 #   - GitLab Runner registered with SHELL executor (not docker executor!)
 #     because we need VMs to persist on the host after the pipeline finishes
-#   - Runner tag must match RUNNER_TAG variable
+#   - Runner tag must match RUNNER_TAG CI/CD variable
 #
 # Register runner (example):
 #   gitlab-runner register \
@@ -47,6 +47,13 @@ stages:
 # ─── Defaults ────────────────────────────────────────────────────────────────
 # Shell executor — runs directly on the host OS. Docker commands control
 # the host's Docker daemon, so VMs persist after the job finishes.
+#
+# The runner tag is read from the CI/CD variable RUNNER_TAG.
+# Set it in: Settings → CI/CD → Variables → Add Variable
+#   Key:   RUNNER_TAG
+#   Value: your-runner-tag (e.g., "docker", "macos", "linux")
+#
+# NOTE: Variable expansion in tags requires GitLab 14.1+.
 default:
   tags:
     - $RUNNER_TAG
@@ -123,7 +130,7 @@ deploy:
     - echo "═══ Waiting for services to initialize... ═══"
     - sleep 20
 
-    - echo "═══ Running containers: ═══"
+    - echo "═══ Running containers ═══"
     - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
   rules:
     - if: $CI_COMMIT_BRANCH

@@ -1,0 +1,18 @@
+# Force Unix line endings for all shell scripts and entrypoint files.
+# Prevents Windows CRLF from breaking scripts inside Linux containers.
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+build text eol=lf
+start text eol=lf
+stop text eol=lf
+run text eol=lf
+kill text eol=lf
+deploy text eol=lf
+
+# Dockerfiles and compose files
+Dockerfile* text eol=lf
+docker-compose*.yml text eol=lf
+
+# CI configs
+.gitlab-ci.yml text eol=lf
+.github/**/*.yml text eol=lf

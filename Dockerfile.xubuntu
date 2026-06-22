@@ -793,8 +793,8 @@ RUN PULSE_VERSION=$(ls -d /usr/lib/pulse-* | head -n 1 | cut -d '-' -f 2) && \
 # Copy entrypoint script
 COPY entrypoint.sh /usr/bin/entrypoint
 
-# FORCE EXECUTABLE PERMISSIONS INSIDE THE IMAGE LAYER
-RUN chmod +x /usr/bin/entrypoint
+# FORCE EXECUTABLE PERMISSIONS AND UNIX LINE ENDINGS INSIDE THE IMAGE LAYER
+RUN chmod +x /usr/bin/entrypoint && sed -i 's/\r$//' /usr/bin/entrypoint
 
 WORKDIR /app
 EXPOSE 3389/tcp
