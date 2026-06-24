@@ -240,8 +240,8 @@ services:
     # into the container, uncomment the devices section below.
     #
     # Option A — Pass ALL USB devices:
-    #   devices:
-    #     - /dev/bus/usb:/dev/bus/usb
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     #
     # Option B — Pass a specific device (find path with: lsusb + ls /dev/bus/usb/):
     #   devices:
