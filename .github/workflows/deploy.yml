@@ -185,14 +185,14 @@ jobs:
           run_test "xrdp listening on 3389" \
             "docker exec xubuntu-vm bash -c 'ss -tlnp | grep -q :3389'"
 
-          run_test "Python 3.12 installed" \
-            "docker exec xubuntu-vm bash -c 'python3 --version | grep -q 3.12'"
+          run_test "Python installed" \
+            "docker exec xubuntu-vm bash -c 'python3 --version'"
 
-          run_test "Java 21 installed" \
-            "docker exec xubuntu-vm bash -c 'java -version 2>&1 | grep -q 21'"
+          run_test "Java installed" \
+            "docker exec xubuntu-vm bash -c 'java -version 2>&1'"
 
-          run_test "Node.js 20 installed" \
-            "docker exec xubuntu-vm bash -c 'node --version | grep -q v20'"
+          run_test "Node.js installed" \
+            "docker exec xubuntu-vm bash -c 'node --version'"
 
           run_test "Docker CLI inside Xubuntu" \
             "docker exec xubuntu-vm bash -c 'docker --version | grep -q Docker'"

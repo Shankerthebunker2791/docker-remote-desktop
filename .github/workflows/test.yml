@@ -24,5 +24,6 @@ jobs:
         env:
           ubuntu_codename: noble
         with:
+          file: Dockerfile.xubuntu
           build-args: |
             TAG=${{ env.ubuntu_codename }}

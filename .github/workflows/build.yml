@@ -38,6 +38,7 @@ jobs:
           ubuntu_codename: noble
           ubuntu_version: 24.04
         with:
+          file: Dockerfile.xubuntu
           build-args: |
             TAG=${{ env.ubuntu_codename }}
           platforms: |
