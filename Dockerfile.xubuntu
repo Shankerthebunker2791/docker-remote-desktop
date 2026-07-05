@@ -768,8 +768,11 @@ RUN yes | sdkmanager --licenses
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then \
         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
-    else \
+    elif [ "$ARCH" = "amd64" ]; then \
         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
+    else \
+        echo "❌ ERROR: Architecture '$ARCH' is not supported. Android Emulator requires amd64 or arm64." && \
+        exit 1; \
     fi && \
     echo "⚙️ Buildx Target Architecture: $ARCH" && \
     echo "⚙️ Resolving Package: build-tools;${ANDROID_BUILD_TOOLS_VERSION}" && \
@@ -783,13 +786,16 @@ RUN ARCH=$(dpkg --print-architecture) && \
         "emulator" \
         "${EMULATOR_PKG}"
 
-RUN ARCH=$(dpkg --print-architecture) \
-    && if [ "$ARCH" = "arm64" ]; then \
-         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
-       else \
-         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
-       fi \
-    && echo "no" | avdmanager create avd \
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then \
+        EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
+    elif [ "$ARCH" = "amd64" ]; then \
+        EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
+    else \
+        echo "❌ ERROR: Skipping AVD creation. Architecture '$ARCH' is unsupported." && \
+        exit 1; \
+    fi && \
+    echo "no" | avdmanager create avd \
          -n "${ANDROID_AVD_NAME}" \
          -k "${EMULATOR_PKG}" \
          --device "${ANDROID_AVD_DEVICE}" \
