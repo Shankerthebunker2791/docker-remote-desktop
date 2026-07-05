@@ -11,6 +11,10 @@ on:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    # the runner engine can see them inside 'with' properties
+    env:
+      ubuntu_codename: noble
+      ubuntu_version: "24.04"
     steps:
 
       - name: Checkout

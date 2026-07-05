@@ -4,7 +4,7 @@
 # Works on any self-hosted runner: Linux, macOS, or Windows.
 #
 # On every push to any branch (or manual trigger):
-#   1. Cleans ALL Docker state on the runner (full purge)
+#   1. Cleans target Docker container states safely without losing massive base caches
 #   2. Builds the Xubuntu image from scratch
 #   3. Spins up all three VMs (xubuntu, windows, macos) via docker compose
 #   4. Runs validation tests and generates a JUnit report
@@ -13,7 +13,7 @@
 # a fresh clean + redeploy.
 #
 # Required GitHub Secrets:
-#   DOCKERHUB_USERNAME   — Docker Hub username
+#   DOCKERHUB_USERNAME   — Docker Hub username to avoid image pull rate limits
 #   DOCKERHUB_TOKEN      — Docker Hub access token
 #
 # Required Repository Variable (Settings → Variables → Actions):
@@ -33,128 +33,100 @@ env:
   DOCKER_BUILDKIT: "1"
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # STAGE 1: CLEAN
-  # ═══════════════════════════════════════════════════════════════════════════
-  clean:
-    name: Clean Runner
+  pipeline:
+    name: VM Lifecycle & Validation Engine
+    # Single job execution guarantees all stages run on the exact same physical machine instance
     runs-on: ${{ vars.RUNNER_LABEL || 'self-hosted' }}
 
     steps:
-      - name: Checkout (for compose files)
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Stop all running compose projects
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ═══════════════════════════════════════════════════════════════════════
+      # STAGE 1: SAFE CLEANUP
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Stop Active Compose Infrastructure
         shell: bash
         run: |
           docker compose -f docker-compose-xubuntu.yml down -v 2>/dev/null || true
           docker compose -f docker-compose-windows.yml down 2>/dev/null || true
           docker compose -f docker-compose-macos.yml down 2>/dev/null || true
-
-      - name: Kill any leftover containers
-        shell: bash
-        run: |
           docker rm -f xubuntu-vm xubuntu-vm-interactive windows-vm macos-vm 2>/dev/null || true
 
-      - name: Purge all Docker state
-        shell: bash
-        run: |
-          docker system prune -af --volumes
-          docker builder prune -af
-          echo "✓ Docker fully cleaned"
-
-      - name: Remove old project data
+      - name: Purge Temporary Workspace Data
         shell: bash
         run: |
           rm -rf shared projects windows-data windows-shared macos-data macos-shared 2>/dev/null || true
-          echo "✓ Data directories removed"
+          echo "✓ Ephemeral data directories removed"
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # STAGE 2: BUILD
-  # ═══════════════════════════════════════════════════════════════════════════
-  build:
-    name: Build Images
-    runs-on: ${{ vars.RUNNER_LABEL || 'self-hosted' }}
-    needs: clean
+      - name: Safe Garbage Collection
+        shell: bash
+        run: |
+          # Prunes dangling layers, build caches, and stopped containers without dropping massive pulled images
+          docker container prune -f
+          docker image prune -f
+          docker builder prune -f
+          echo "✓ Temporary Docker layers cleaned safely"
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build Xubuntu image
+      # ═══════════════════════════════════════════════════════════════════════
+      # STAGE 2: BUILD
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Build Xubuntu Core Image
         shell: bash
         run: |
           docker build --no-cache -f Dockerfile.xubuntu -t ${{ env.IMAGE_NAME }}:latest .
           echo "✓ Built ${{ env.IMAGE_NAME }}:latest"
 
-      - name: Pull Windows and macOS images
+      - name: Verify VM Base Images (Fast-skip network if cached)
         shell: bash
         run: |
-          docker pull dockurr/windows
-          docker pull dockurr/macos
-          echo "✓ All images ready"
+          docker inspect dockurr/windows >/dev/null 2>&1 || docker pull dockurr/windows
+          docker inspect dockurr/macos >/dev/null 2>&1 || docker pull dockurr/macos
+          echo "✓ OS Virtualization base layers verified on host"
 
-      - name: Clean build artifacts
-        shell: bash
-        run: |
-          docker builder prune -af
-          docker image prune -f
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # STAGE 3: DEPLOY (Spin Up VMs)
-  # ═══════════════════════════════════════════════════════════════════════════
-  deploy:
-    name: Spin Up VMs
-    runs-on: ${{ vars.RUNNER_LABEL || 'self-hosted' }}
-    needs: build
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create shared directories
+      # ═══════════════════════════════════════════════════════════════════════
+      # STAGE 3: DEPLOY
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Reinitialize Environment Workspace Directories
         shell: bash
         run: mkdir -p shared projects windows-shared macos-shared
 
-      - name: Start Xubuntu
+      - name: Spin Up Xubuntu VM Instance
         shell: bash
         run: |
           docker compose -f docker-compose-xubuntu.yml up -d
           echo "✓ Xubuntu → RDP localhost:3392 (ubuntu/ubuntu)"
 
-      - name: Start Windows
+      - name: Spin Up Windows VM Instance
         shell: bash
         run: |
           docker compose -f docker-compose-windows.yml up -d
           echo "✓ Windows → RDP localhost:3390 (Docker/admin) | Web http://localhost:8009"
 
-      - name: Start macOS
+      - name: Spin Up macOS VM Instance
         shell: bash
         run: |
           docker compose -f docker-compose-macos.yml up -d
           echo "✓ macOS → VNC localhost:5901 | Web http://localhost:8006"
 
-      - name: Wait for services to initialize
+      - name: Await Boot Sequence Initialization
         shell: bash
         run: sleep 20
 
-      - name: Show running containers
+      - name: Inspect Runtime Container Topologies
         shell: bash
         run: docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # STAGE 4: TEST
-  # ═══════════════════════════════════════════════════════════════════════════
-  test:
-    name: Validate VMs
-    runs-on: ${{ vars.RUNNER_LABEL || 'self-hosted' }}
-    needs: deploy
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run validation tests
+      # ═══════════════════════════════════════════════════════════════════════
+      # STAGE 4: TEST & VALIDATE
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Execute Validation Suite Matrix
         shell: bash
         run: |
           mkdir -p test-results
@@ -167,7 +139,7 @@ jobs:
 
           run_test() {
             local name="$1"; shift
-            TESTS=$((TESTS + 1))
+            TESTS=$((${TESTS} + 1))
             if eval "$@" > /dev/null 2>&1; then
               echo "    <testcase classname=\"VMValidation\" name=\"${name}\"/>" >> "$REPORT"
               echo "✓ ${name}"
@@ -178,94 +150,59 @@ jobs:
             fi
           }
 
-          # ── Xubuntu Tests ──
-          run_test "Xubuntu container running" \
-            "docker ps --filter name=xubuntu-vm --filter status=running --format '{{.Names}}' | grep -qx xubuntu-vm"
+          # ── Xubuntu Environment Assertions ──
+          run_test "Xubuntu container running" "docker ps --filter name=xubuntu-vm --filter status=running --format '{{.Names}}' | grep -qx xubuntu-vm"
+          run_test "xrdp listening on 3389" "docker exec xubuntu-vm bash -c 'ss -tlnp | grep -q :3389'"
+          run_test "Python installed" "docker exec xubuntu-vm bash -c 'python3 --version'"
+          run_test "Java installed" "docker exec xubuntu-vm bash -c 'java -version 2>&1'"
+          run_test "Node.js installed" "docker exec xubuntu-vm bash -c 'node --version'"
+          run_test "Docker CLI inside Xubuntu" "docker exec xubuntu-vm bash -c 'docker --version | grep -q Docker'"
+          run_test "Gradle installed" "docker exec xubuntu-vm bash -c 'gradle --version 2>&1 | grep -q Gradle'"
+          run_test "Maven installed" "docker exec xubuntu-vm bash -c 'mvn --version 2>&1 | grep -q Maven'"
+          run_test "Ant installed" "docker exec xubuntu-vm bash -c 'ant -version 2>&1 | grep -q Ant'"
+          run_test "Ubuntu user exists" "docker exec xubuntu-vm id ubuntu"
+          run_test "SSH keys regenerated" "docker exec xubuntu-vm test -f /etc/ssh/.keys_regenerated"
+          run_test "adb available" "docker exec xubuntu-vm which adb"
+          run_test "PowerShell available" "docker exec xubuntu-vm bash -c 'pwsh -Version | grep -q PowerShell'"
+          run_test "GitLab Runner available" "docker exec xubuntu-vm bash -c 'gitlab-runner --version | grep -q Version'"
+          run_test "telnet available" "docker exec xubuntu-vm which telnet"
+          run_test "ffmpeg available" "docker exec xubuntu-vm bash -c 'ffmpeg -version | grep -q ffmpeg'"
 
-          run_test "xrdp listening on 3389" \
-            "docker exec xubuntu-vm bash -c 'ss -tlnp | grep -q :3389'"
+          # ── Windows Environment Assertions ──
+          run_test "Windows container running" "docker ps --filter name=windows-vm --filter status=running --format '{{.Names}}' | grep -qx windows-vm"
 
-          run_test "Python installed" \
-            "docker exec xubuntu-vm bash -c 'python3 --version'"
+          # ── macOS Environment Assertions ──
+          run_test "macOS container running" "docker ps --filter name=macos-vm --filter status=running --format '{{.Names}}' | grep -qx macos-vm"
 
-          run_test "Java installed" \
-            "docker exec xubuntu-vm bash -c 'java -version 2>&1'"
-
-          run_test "Node.js installed" \
-            "docker exec xubuntu-vm bash -c 'node --version'"
-
-          run_test "Docker CLI inside Xubuntu" \
-            "docker exec xubuntu-vm bash -c 'docker --version | grep -q Docker'"
-
-          run_test "Gradle installed" \
-            "docker exec xubuntu-vm bash -c 'gradle --version 2>&1 | grep -q Gradle'"
-
-          run_test "Maven installed" \
-            "docker exec xubuntu-vm bash -c 'mvn --version 2>&1 | grep -q Maven'"
-
-          run_test "Ant installed" \
-            "docker exec xubuntu-vm bash -c 'ant -version 2>&1 | grep -q Ant'"
-
-          run_test "Ubuntu user exists" \
-            "docker exec xubuntu-vm id ubuntu"
-
-          run_test "SSH keys regenerated" \
-            "docker exec xubuntu-vm test -f /etc/ssh/.keys_regenerated"
-
-          run_test "adb available" \
-            "docker exec xubuntu-vm which adb"
-
-          run_test "PowerShell available" \
-            "docker exec xubuntu-vm bash -c 'pwsh -Version | grep -q PowerShell'"
-
-          run_test "GitLab Runner available" \
-            "docker exec xubuntu-vm bash -c 'gitlab-runner --version | grep -q Version'"
-
-          run_test "telnet available" \
-            "docker exec xubuntu-vm which telnet"
-
-          run_test "ffmpeg available" \
-            "docker exec xubuntu-vm bash -c 'ffmpeg -version | grep -q ffmpeg'"
-
-          # ── Windows Tests ──
-          run_test "Windows container running" \
-            "docker ps --filter name=windows-vm --filter status=running --format '{{.Names}}' | grep -qx windows-vm"
-
-          # ── macOS Tests ──
-          run_test "macOS container running" \
-            "docker ps --filter name=macos-vm --filter status=running --format '{{.Names}}' | grep -qx macos-vm"
-
-          # Close XML
+          # Finalize XML Structure Tree
           DURATION=$(($(date +%s) - START))
           echo "  </testsuite>" >> "$REPORT"
           echo "</testsuites>" >> "$REPORT"
 
-          # Handle both GNU sed (Linux) and BSD sed (macOS)
+          # Polyfill text parsing for cross-platform runners (GNU vs BSD sed compatibility checks)
           if sed --version 2>/dev/null | grep -q GNU; then
             sed -i "s/<testsuite name=\"VMValidation\">/<testsuite name=\"VMValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
           else
             sed -i '' "s/<testsuite name=\"VMValidation\">/<testsuite name=\"VMValidation\" tests=\"${TESTS}\" failures=\"${FAILURES}\" time=\"${DURATION}\">/" "$REPORT"
           fi
 
-          echo ""
-          echo "═══ ${TESTS} tests, ${FAILURES} failures, ${DURATION}s ═══"
-          echo ""
+          echo -e "\n═══ ${TESTS} tests, ${FAILURES} failures, ${DURATION}s ═══\n"
           docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
           [ "$FAILURES" -eq 0 ] || exit 1
 
-      - name: Upload JUnit report
+      - name: Upload JUnit Performance Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: junit-report
           path: test-results/junit-report.xml
-          retention-days: 90
+          retention-days: 14
 
-      - name: Publish test results
+      - name: Publish Test Dashboard Summary
         uses: mikepenz/action-junit-report@v4
         if: always()
         with:
           report_paths: test-results/junit-report.xml
-          check_name: VM Validation
+          check_name: VM Validation Run
           fail_on_failure: true

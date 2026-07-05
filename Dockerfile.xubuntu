@@ -823,19 +823,30 @@ ENV LANG=en_US.UTF-8
 RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
 
 # Copy pulseaudio xrdp modules from builder stage
-COPY --from=builder /tmp/install /
+# make sure you bring the compiled modules over from your builder stage
+# (Adjust the source path if your builder output isn't using /tmp/install)
+COPY --from=builder /tmp/install/ /
 
 # Initialize the D-Bus machine ID safely (using the --ensure flag that bypasses Pipewire conflicts)
 RUN mkdir -p /var/lib/dbus && \
     dbus-uuidgen --ensure && \
     ln -sf /var/lib/dbus/machine-id /etc/machine-id || true
 
-# Optimizes path resolution and injects proper validation checks to ensure safety
+# Optimizes path resolution and injects proper validation checks to ensure safety.
+# Note: Loop safeguards against shell wildcard expansion failures if modules are missing.
 RUN PULSE_DIR=$(ls -d /usr/lib/pulse-* | head -n 1) && \
     if [ -n "$PULSE_DIR" ]; then \
-        chmod 755 "${PULSE_DIR}/modules/module-xrdp-*.so" && \
-        echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa && \
-        echo "load-module module-xrdp-source" >> /etc/pulse/default.pa; \
+        for module in "${PULSE_DIR}"/modules/module-xrdp-*.so; do \
+            if [ -e "$module" ]; then \
+                chmod 755 "$module"; \
+            else \
+                echo "⚠️ Warning: No xrdp audio modules found in ${PULSE_DIR}/modules/"; \
+            fi; \
+        done \
+        && echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa \
+        && echo "load-module module-xrdp-source" >> /etc/pulse/default.pa; \
+    else \
+        echo "⚠️ Warning: PulseAudio directory not found"; \
     fi
 
 # Copy entrypoint script

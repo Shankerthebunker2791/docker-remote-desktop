@@ -8,6 +8,9 @@ on:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    # to the runner job level so it's accessible inside the step's 'with' properties
+    env:
+      ubuntu_codename: noble
     steps:
       - name: Checkout
         uses: actions/checkout@v4
