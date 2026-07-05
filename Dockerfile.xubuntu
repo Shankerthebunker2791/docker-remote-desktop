@@ -762,20 +762,26 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
     && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
     && rm /tmp/cmdline-tools.zip
 
-RUN yes | sdkmanager --licenses > /dev/null 2>&1 && sdkmanager --update
+# RUN yes | sdkmanager --licenses > /dev/null 2>&1 && sdkmanager --update
+RUN yes | sdkmanager --licenses
 
-RUN ARCH=$(dpkg --print-architecture) \
-    && if [ "$ARCH" = "arm64" ]; then \
-         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
-       else \
-         EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
-       fi \
-    && sdkmanager --install \
-         "platform-tools" \
-         "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
-         "platforms;android-${ANDROID_PLATFORM_VERSION}" \
-         "emulator" \
-         "${EMULATOR_PKG}"
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then \
+        EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_ARM}"; \
+    else \
+        EMULATOR_PKG="${ANDROID_EMULATOR_PACKAGE_X86}"; \
+    fi && \
+    echo "⚙️ Buildx Target Architecture: $ARCH" && \
+    echo "⚙️ Resolving Package: build-tools;${ANDROID_BUILD_TOOLS_VERSION}" && \
+    echo "⚙️ Resolving Package: platforms;android-${ANDROID_PLATFORM_VERSION}" && \
+    echo "⚙️ Resolving Emulator Package: ${EMULATOR_PKG}" && \
+    yes | sdkmanager --licenses && \
+    yes | sdkmanager --install \
+        "platform-tools" \
+        "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
+        "platforms;android-${ANDROID_PLATFORM_VERSION}" \
+        "emulator" \
+        "${EMULATOR_PKG}"
 
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "arm64" ]; then \
