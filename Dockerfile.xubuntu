@@ -607,12 +607,26 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 #   pwsh — PowerShell Core (cross-platform). Useful for running .ps1 scripts,
 #          Azure/AWS automation, and cross-platform scripting.
 # -----------------------------------------------------------------------------
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg \
-    && chmod a+r /etc/apt/keyrings/microsoft.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-ubuntu-$(. /etc/os-release && echo $VERSION_CODENAME)-prod $(. /etc/os-release && echo $VERSION_CODENAME) main" \
-        | tee /etc/apt/sources.list.d/microsoft.list \
-    && apt-get update \
-    && apt-get install -y powershell \
+RUN apt-get update && apt-get install -y curl gnupg wget ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && ARCH="$(dpkg --print-architecture)" \
+    && if [ "$ARCH" = "amd64" ]; then \
+        . /etc/os-release \
+        && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg \
+        && chmod a+r /etc/apt/keyrings/microsoft.gpg \
+        && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/${VERSION_ID}/prod ${VERSION_CODENAME} main" \
+            | tee /etc/apt/sources.list.d/microsoft.list \
+        && apt-get update \
+        && apt-get install -y powershell; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        : "Handle ARM64 via official standalone binary distribution safely" \
+        && apt-get update && apt-get install -y less locales libicu-dev \
+        && PWSH_VERSION="7.4.6" \
+        && wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-arm64.tar.gz" \
+        && mkdir -p /opt/microsoft/powershell/7 \
+        && tar -zxf "powershell-${PWSH_VERSION}-linux-arm64.tar.gz" -C /opt/microsoft/powershell/7 \
+        && ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
+        && rm "powershell-${PWSH_VERSION}-linux-arm64.tar.gz"; \
+    fi \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -816,11 +830,13 @@ RUN mkdir -p /var/lib/dbus && \
     dbus-uuidgen --ensure && \
     ln -sf /var/lib/dbus/machine-id /etc/machine-id || true
 
-# Ensure the modules are in the correct versioned PulseAudio directory and permitted
-RUN PULSE_VERSION=$(ls -d /usr/lib/pulse-* | head -n 1 | cut -d '-' -f 2) && \
-    chmod 755 /usr/lib/pulse-${PULSE_VERSION}/modules/module-xrdp-*.so && \
-    echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa && \
-    echo "load-module module-xrdp-source" >> /etc/pulse/default.pa
+# Optimizes path resolution and injects proper validation checks to ensure safety
+RUN PULSE_DIR=$(ls -d /usr/lib/pulse-* | head -n 1) && \
+    if [ -n "$PULSE_DIR" ]; then \
+        chmod 755 "${PULSE_DIR}/modules/module-xrdp-*.so" && \
+        echo "load-module module-xrdp-sink" >> /etc/pulse/default.pa && \
+        echo "load-module module-xrdp-source" >> /etc/pulse/default.pa; \
+    fi
 
 # Copy entrypoint script
 COPY entrypoint.sh /usr/bin/entrypoint
